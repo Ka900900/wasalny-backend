@@ -1,0 +1,25 @@
+◇ injected env (14) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+✅ Firebase Admin SDK initialized
+
+🚀 Waslny API v2.0.0
+✅ Server running on http://0.0.0.0:3000
+📚 API Docs: http://0.0.0.0:3000/api-docs
+🔌 Socket.IO ready
+
+[REQ] GET / -> 200 (36ms)
+prisma:query INSERT INTO "public"."SupportMessage" ("id","userId","sender","text","createdAt") VALUES ($1,$2,$3,$4,$5) RETURNING "public"."SupportMessage"."id", "public"."SupportMessage"."userId", "public"."SupportMessage"."sender", "public"."SupportMessage"."text", "public"."SupportMessage"."createdAt"
+[REQ] POST /api/v1/support/messages -> 201 (330ms)
+prisma:query INSERT INTO "public"."SupportMessage" ("id","userId","sender","text","createdAt") VALUES ($1,$2,$3,$4,$5) RETURNING "public"."SupportMessage"."id", "public"."SupportMessage"."userId", "public"."SupportMessage"."sender", "public"."SupportMessage"."text", "public"."SupportMessage"."createdAt"
+[REQ] POST /api/v1/support/messages -> 201 (44ms)
+prisma:query SELECT "public"."SupportMessage"."id", "public"."SupportMessage"."userId", "public"."SupportMessage"."sender", "public"."SupportMessage"."text", "public"."SupportMessage"."createdAt" FROM "public"."SupportMessage" WHERE "public"."SupportMessage"."userId" = $1 ORDER BY "public"."SupportMessage"."createdAt" ASC OFFSET $2
+[REQ] GET /api/v1/support/messages -> 200 (76ms)
+prisma:query SELECT "public"."User"."id", "public"."User"."firebaseUid", "public"."User"."phoneNumber", "public"."User"."email", "public"."User"."firstName", "public"."User"."lastName", "public"."User"."role", "public"."User"."isVerified", "public"."User"."isActive", "public"."User"."lastLoginAt", "public"."User"."otpCode", "public"."User"."otpExpiresAt", "public"."User"."avatarUrl", "public"."User"."createdAt", "public"."User"."updatedAt" FROM "public"."User" WHERE ("public"."User"."id" = $1 AND 1=1) LIMIT $2 OFFSET $3
+prisma:query INSERT INTO "public"."SupportMessage" ("id","userId","sender","text","createdAt") VALUES ($1,$2,$3,$4,$5) RETURNING "public"."SupportMessage"."id", "public"."SupportMessage"."userId", "public"."SupportMessage"."sender", "public"."SupportMessage"."text", "public"."SupportMessage"."createdAt"
+[REQ] POST /api/v1/admin/support/messages/cmri97w200000lcdss5s344ww -> 201 (66ms)
+prisma:query SELECT "public"."SupportMessage"."id", "public"."SupportMessage"."userId" FROM "public"."SupportMessage" WHERE 1=1 OFFSET $1
+prisma:query SELECT "public"."SupportMessage"."id", "public"."SupportMessage"."userId", "public"."SupportMessage"."sender", "public"."SupportMessage"."text", "public"."SupportMessage"."createdAt" FROM "public"."SupportMessage" WHERE "public"."SupportMessage"."userId" = $1 ORDER BY "public"."SupportMessage"."createdAt" DESC LIMIT $2 OFFSET $3
+prisma:query SELECT "public"."User"."id", "public"."User"."firstName", "public"."User"."lastName" FROM "public"."User" WHERE "public"."User"."id" IN ($1) OFFSET $2
+[REQ] GET /api/v1/admin/support/conversations -> 200 (47ms)
+prisma:query SELECT "public"."SupportMessage"."id", "public"."SupportMessage"."userId", "public"."SupportMessage"."sender", "public"."SupportMessage"."text", "public"."SupportMessage"."createdAt" FROM "public"."SupportMessage" WHERE "public"."SupportMessage"."userId" = $1 ORDER BY "public"."SupportMessage"."createdAt" ASC OFFSET $2
+[REQ] GET /api/v1/admin/support/messages/cmri97w200000lcdss5s344ww -> 200 (5ms)
+[REQ] GET /api/v1/admin/support/conversations -> 403 (2ms)

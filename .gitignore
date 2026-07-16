@@ -1,0 +1,20 @@
+
+# ───────────────────────────────
+# Secrets — لا تُرفع أبداً إلى المستودع
+# ───────────────────────────────
+.env
+.env.*
+!.env.example
+config/firebase-service-account*.json
+*.pem
+*.key
+
+# Dependencies
+node_modules/
+
+# Generated
+/generated/prisma
+
+# Logs
+*.log
+npm-debug.log*
