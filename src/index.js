@@ -46,6 +46,9 @@ const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3000;
 
+// Trust Railway's reverse proxy so express-rate-limit can read the real client IP
+app.set('trust proxy', 1);
+
 // ── Swagger Config ───────────────────────────────────
 const swaggerSpec = swaggerJsdoc({
   definition: {
@@ -116,6 +119,10 @@ app.locals.io = io;
 // ── Routes ───────────────────────────────────────────
 app.use('/api/v1/auth', authLimiter, authRoutes);
 app.use('/api/auth', authRoutes);
+
+// ── Alias صريح لضمان نجاح طلبات العميل لـ /api/v1/auth/register-fcm-token ──
+const authController = require('./controllers/auth.controller');
+app.post('/api/v1/auth/register-fcm-token', authenticateToken, authController.registerFcmToken);
 app.use('/api/v1/user', usersRoutes);
 app.use('/api/v1/driver', captainsRoutes);
 app.use('/api/v1/rides', ridesRoutes);

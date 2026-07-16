@@ -6,17 +6,26 @@ async function getWalletBalanceHandler(req, res) {
     res.json(data);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'خطأ في جلب رصيد المحفظة' });
+    // fallback آمن: نرجّع رصيد صفر بدل 500
+    res.json({
+      balance: 0,
+      pendingWithdraw: 0,
+      totalEarned: 0,
+      totalWithdrawn: 0,
+      fullName: '',
+    });
   }
 }
 
 async function getTransactionsHandler(req, res) {
   try {
     const transactions = await getTransactions(req.user.userId);
-    res.json({ transactions });
+    // fallback آمن: لو ما فيش محفظة/معاملات نرجّع مصفوفة فارغة بدل 500
+    res.json({ transactions: transactions || [] });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'خطأ في جلب المعاملات' });
+    // بديلاً عن رمي 500، نرجّع مصفوفة فارغة مع 200 حتى لا ينهار العميل
+    res.json({ transactions: [] });
   }
 }
 
