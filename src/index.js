@@ -40,6 +40,7 @@ const {
   rateRideSchema,
 } = require('./validators/ride.validator');
 const { withdrawSchema, topUpSchema } = require('./validators/wallet.validator');
+const uploadRoutes = require('./routes/upload.routes');
 
 // ── App Setup ────────────────────────────────────────
 const app = express();
@@ -130,6 +131,7 @@ app.use('/api/v1/wallet', walletRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/support', supportRoutes);
 app.use('/api/v1/safety', safetyRoutes);
+app.use('/api/v1/upload', uploadRoutes);
 
 // ── Helper: Hash OTP ─────────────────────────────────
 async function hashOtp(otp) {
@@ -347,7 +349,8 @@ app.post('/api/v1/auth/register-driver', authenticateToken, validate(registerDri
       token: newToken,
     });
   } catch (error) {
-    console.error(error);
+    console.error('[register-driver] ERROR details:', error?.message || error);
+    console.error('[register-driver] user role at failure =', req.user?.role);
     // التعامل مع خطأ unique constraint على رقم الهاتف
     if (error.code === 'P2002') {
       return res.status(409).json({ error: 'رقم الهاتف مسجل بالفعل' });
@@ -1506,7 +1509,7 @@ app.put('/api/v1/user/profile/update', authenticateToken, async (req, res) => {
     });
     res.json({ message: 'تم تحديث الملف الشخصي', user });
   } catch (error) {
-    console.error(error);
+    console.error('[updateProfile] IMAGE UPLOAD ERROR details:', error?.message || error);
     res.status(500).json({ error: 'خطأ في تحديث الملف الشخصي' });
   }
 });
