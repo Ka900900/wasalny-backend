@@ -1,4 +1,6 @@
 const { getWalletBalance, getTransactions, requestWithdrawal, getWithdraws, topUpWallet } = require('../services/wallet.service');
+const { generateKashierCheckoutHash } = require('../services/kashier');
+const prisma = require('../config/prisma');
 
 async function getWalletBalanceHandler(req, res) {
   try {
@@ -62,4 +64,150 @@ async function topUpWalletHandler(req, res) {
   }
 }
 
-module.exports = { getWalletBalanceHandler, getTransactionsHandler, requestWithdrawalHandler, getWithdrawsHandler, topUpWalletHandler };
+/**
+ * GET /api/v1/wallet/kashier-checkout-page
+ * يرسل صفحة HTML تحتوي على زرّ دفع كاشier (Checkout JS/Form) لشحن المحفظة.
+ * يقبل amount و userId كـ query params.
+ */
+async function kashierCheckoutPageHandler(req, res) {
+  try {
+    const { amount, userId } = req.query;
+
+    if (!amount || !userId) {
+      return res.status(400).send('<h1 style="color:red;text-align:center;margin-top:50px;">❌ ناقص بيانات (amount أو userId)</h1>');
+    }
+
+    const amt = Number(amount);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      return res.status(400).send('<h1 style="color:red;text-align:center;margin-top:50px;">❌ المبلغ غير صالح</h1>');
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return res.status(404).send('<h1 style="color:red;text-align:center;margin-top:50px;">❌ المستخدم غير موجود</h1>');
+    }
+
+    const merchantId = process.env.KASHIER_MID;
+    const currency = 'EGP';
+    const orderId = `topup_${userId}_${Date.now()}`;
+    const formattedAmount = amt.toFixed(2);
+    const hash = generateKashierCheckoutHash(orderId, amt, currency);
+    const appUrl = process.env.APP_URL || `http://${req.get('host')}`;
+    const backendCallbackUrl = `${appUrl}/api/v1/wallet/kashier-callback`;
+
+    const html = `<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>شحن المحفظة - وصلني</title>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f5f7fa; margin: 0; padding: 24px; }
+    .card { max-width: 420px; margin: 40px auto; background: #fff; border-radius: 16px; padding: 32px; box-shadow: 0 4px 20px rgba(0,0,0,.08); text-align: center; }
+    h2 { color: #1a73e8; margin-bottom: 8px; }
+    .amount { font-size: 32px; font-weight: bold; color: #222; margin: 16px 0; }
+    .kashier-payment-btn { margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>شحن محفظة وصلني</h2>
+    <p>المبلغ المطلوب شحنه</p>
+    <div class="amount">${formattedAmount} ${currency}</div>
+    <script
+      id="kashier-iFrame"
+      src="https://checkout.kashier.co/js/kashier-checkout.js"
+      data-hash="${hash}"
+      data-amount="${formattedAmount}"
+      data-merchantId="${merchantId}"
+      data-orderId="${orderId}"
+      data-currency="${currency}"
+      data-type="external"
+      data-display="ar"
+      data-callback="${backendCallbackUrl}?userId=${userId}"
+      class="kashier-payment-btn">
+    </script>
+  </div>
+</body>
+</html>`;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send('<h1 style="color:red;text-align:center;margin-top:50px;">❌ خطأ في الخادم</h1>');
+  }
+}
+
+/**
+ * GET /api/v1/wallet/kashier-callback
+ * يعيد توجيهه كاشier بعد الدفع. يتحقق من الحالة ويحدّث رصيد المحفظة ثم يعرض صفحة نجاح/فشل.
+ */
+async function kashierCallbackHandler(req, res) {
+  try {
+    const { userId, status, orderId, merchantOrderId, paymentStatus } = req.query;
+    const order = orderId || merchantOrderId;
+
+    const success = status === 'success' || paymentStatus === 'PAID' || paymentStatus === 'success';
+
+    if (!success || !userId || !order) {
+      return res
+        .status(400)
+        .setHeader('Content-Type', 'text/html; charset=utf-8')
+        .send(`<h1 style="color:red;text-align:center;margin-top:50px;">❌ فشل الدفع</h1>
+          <p style="text-align:center;">لم يتم تأكيد العملية، يرجى المحاولة مرة أخرى.</p>`);
+    }
+
+    // منع الاحتساب المكرر لنفس العملية
+    const already = await prisma.walletTransaction.findFirst({
+      where: { type: 'TOPUP', metadata: { path: ['orderId'], equals: order } },
+    });
+    if (already) {
+      return res
+        .setHeader('Content-Type', 'text/html; charset=utf-8')
+        .send(`<h1 style="color:green;text-align:center;margin-top:50px;">✅ تم شحن المحفظة بنجاح</h1>
+          <p style="text-align:center;">تم تأكيد العملية مسبقاً.</p>`);
+    }
+
+    // استعلام Server-side للتأكد قبل تحديث الرصيد
+    const remote = await queryKashierTransaction(order);
+    if (!remote?.paid) {
+      return res
+        .status(402)
+        .setHeader('Content-Type', 'text/html; charset=utf-8')
+        .send(`<h1 style="color:red;text-align:center;margin-top:50px;">❌ لم يتم تأكيد الدفع لدى البنك</h1>
+          <p style="text-align:center;">يرجى المحاولة لاحقاً أو التواصل مع الدعم.</p>`);
+    }
+
+    const wallet = await prisma.wallet.upsert({
+      where: { userId },
+      update: { balance: { increment: remote.amount || 0 } },
+      create: { userId, balance: remote.amount || 0 },
+    });
+    await prisma.walletTransaction.create({
+      data: {
+        walletId: wallet.id,
+        type: 'TOPUP',
+        amount: remote.amount || 0,
+        balanceAfter: wallet.balance,
+        description: 'شحن المحفظة عبر كاشير (Checkout)',
+        status: 'COMPLETED',
+        metadata: { orderId: order, method: 'kashier-checkout' },
+      },
+    });
+
+    res
+      .setHeader('Content-Type', 'text/html; charset=utf-8')
+      .send(`<h1 style="color:green;text-align:center;margin-top:50px;">✅ تم شحن المحفظة بنجاح</h1>
+        <p style="text-align:center;">تمت إضافة الرصيد إلى محفظتك.</p>`);
+  } catch (error) {
+    console.error(error);
+    res
+      .status(500)
+      .setHeader('Content-Type', 'text/html; charset=utf-8')
+      .send(`<h1 style="color:red;text-align:center;margin-top:50px;">❌ خطأ في الخادم</h1>
+        <p style="text-align:center;">حدث خطأ أثناء تأكيد الدفع.</p>`);
+  }
+}
+
+module.exports = { getWalletBalanceHandler, getTransactionsHandler, requestWithdrawalHandler, getWithdrawsHandler, topUpWalletHandler, kashierCheckoutPageHandler, kashierCallbackHandler };

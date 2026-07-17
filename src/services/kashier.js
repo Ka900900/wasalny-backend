@@ -70,6 +70,19 @@ async function createKashierSession(orderId, amount, customerName, customerPhone
 }
 
 /**
+ * يولّد توقيع كاشير (HMAC-SHA256) بصيغة Checkout JS/Form الرسمية:
+ * "mid=" + merchantId + "&orderId=" + orderId + "&amount=" + amount + "&currency=" + currency
+ * يُستخدم لزرّ الدفع المدمج (kashier-payment-btn) في صفحة الـ WebView.
+ */
+function generateKashierCheckoutHash(orderId, amount, currency = 'EGP') {
+  const mid = process.env.KASHIER_MID;
+  const secret = process.env.KASHIER_SECRET_KEY;
+  const formattedAmount = Number(amount).toFixed(2);
+  const payload = `mid=${mid}&orderId=${orderId}&amount=${formattedAmount}&currency=${currency}`;
+  return crypto.createHmac('sha256', secret).update(payload).digest('hex');
+}
+
+/**
  * Verify a Kashier webhook signature (البيانات الخام + التوقيع من الترويسة).
  */
 function verifyWebhookSignature(payload, signature) {
@@ -104,4 +117,4 @@ async function queryKashierTransaction(orderId) {
   }
 }
 
-module.exports = { generateKashierSignature, createKashierSession, queryKashierTransaction, verifyWebhookSignature };
+module.exports = { generateKashierSignature, generateKashierCheckoutHash, createKashierSession, queryKashierTransaction, verifyWebhookSignature };
