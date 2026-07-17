@@ -49,10 +49,10 @@ const registerDriverSchema = {
       'any.required': 'لون السيارة مطلوب',
     }),
     vehicleType: Joi.string()
-      .valid('PRIVATE_CAR', 'TAXI', 'SCOOTER')
+      .valid('PRIVATE_CAR', 'TAXI', 'SCOOTER', 'MOTORCYCLE')
       .required()
       .messages({
-        'any.only': 'نوع المركبة يجب أن يكون PRIVATE_CAR أو TAXI أو SCOOTER',
+        'any.only': 'نوع المركبة يجب أن يكون PRIVATE_CAR أو TAXI أو SCOOTER أو MOTORCYCLE',
         'any.required': 'نوع المركبة مطلوب',
       }),
     carPhotoUrl: Joi.string()

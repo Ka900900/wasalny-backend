@@ -312,7 +312,7 @@ app.post('/api/v1/auth/verify-otp', authLimiter, validate(verifyOtpSchema), asyn
  *               carModel: { type: string }
  *               carPlateNumber: { type: string }
  *               carColor: { type: string }
- *               vehicleType: { type: string, enum: [PRIVATE_CAR, TAXI, SCOOTER] }
+ *               vehicleType: { type: string, enum: [PRIVATE_CAR, TAXI, SCOOTER, MOTORCYCLE] }
  *               carPhotoUrl: { type: string, format: uri }
  *     responses:
  *       201:

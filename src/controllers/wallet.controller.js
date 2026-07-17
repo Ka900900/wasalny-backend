@@ -1,5 +1,5 @@
 const { getWalletBalance, getTransactions, requestWithdrawal, getWithdraws, topUpWallet } = require('../services/wallet.service');
-const { generateKashierCheckoutHash } = require('../services/kashier');
+const { generateKashierCheckoutHash, createKashierSession, queryKashierTransaction } = require('../services/kashier');
 const prisma = require('../config/prisma');
 
 async function getWalletBalanceHandler(req, res) {
@@ -61,6 +61,52 @@ async function topUpWalletHandler(req, res) {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'خطأ في شحن المحفظة' });
+  }
+}
+
+/**
+ * POST /api/v1/wallet/initiate-payment
+ * ينشئ جلسة دفع جديدة مع Kashier ويرجع Session ID للتطبيق.
+ * التطبيق يفتح WebView بـ Session ID للدفع الآمن.
+ */
+async function initiatePaymentHandler(req, res) {
+  try {
+    const { amount } = req.body;
+    const userId = req.user?.userId;
+
+    if (!amount || Number(amount) <= 0) {
+      return res.status(400).json({ error: 'المبلغ يجب أن يكون أكبر من صفر' });
+    }
+
+    if (!userId) {
+      return res.status(401).json({ error: 'المستخدم غير مصرح' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return res.status(404).json({ error: 'المستخدم غير موجود' });
+    }
+
+    const orderId = `topup_${userId}_${Date.now()}`;
+    const session = await createKashierSession(
+      orderId,
+      amount,
+      `${user.firstName} ${user.lastName}`,
+      user.phoneNumber || '',
+      'شحن محفظة وصلني'
+    );
+
+    res.json({
+      success: true,
+      sessionId: session.sessionId,
+      paymentUrl: session.paymentUrl,
+      orderId: session.orderId,
+      amount: session.amount,
+      currency: session.currency,
+    });
+  } catch (error) {
+    console.error('Initiate payment error:', error);
+    res.status(500).json({ error: error.message || 'خطأ في إنشاء جلسة الدفع' });
   }
 }
 
@@ -210,4 +256,4 @@ async function kashierCallbackHandler(req, res) {
   }
 }
 
-module.exports = { getWalletBalanceHandler, getTransactionsHandler, requestWithdrawalHandler, getWithdrawsHandler, topUpWalletHandler, kashierCheckoutPageHandler, kashierCallbackHandler };
+module.exports = { getWalletBalanceHandler, getTransactionsHandler, requestWithdrawalHandler, getWithdrawsHandler, topUpWalletHandler, initiatePaymentHandler, kashierCheckoutPageHandler, kashierCallbackHandler };

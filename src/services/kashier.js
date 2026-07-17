@@ -17,35 +17,38 @@ function generateKashierSignature(orderId, amount, currency = 'EGP') {
 }
 
 /**
- * Create a Kashier payment session.
- * تعيد بيانات عامة فقط (بدون أي سر) لإتمام الدفع في تطبيق Flutter.
+ * Create a Kashier payment session (Payment Sessions API v1).
+ * يُنشئ جلسة دفع آمنة عبر Kashier ويرجع Session ID من الـ API.
+ * لا يُفصح عن المفاتيح السرية نهائياً.
  */
 async function createKashierSession(orderId, amount, customerName, customerPhone, description) {
   const mid = process.env.KASHIER_MID;
-  const mode = process.env.KASHIER_MODE || 'live';
   const currency = 'EGP';
   const appUrl = process.env.APP_URL || 'http://localhost:3000';
-
   const formattedAmount = Number(amount).toFixed(2);
-  const signature = generateKashierSignature(orderId, amount, currency);
-  const merchantRedirect = `${appUrl}/payment/callback`;
   const webhookUrl = `${appUrl}/api/webhooks/kashier`;
+  const callbackUrl = `${appUrl}/api/v1/wallet/kashier-callback`;
 
+  // بيانات الجلسة الآمنة (Payment Sessions بدون توقيع مباشر)
   const requestBody = {
     orderId,
     amount: formattedAmount,
     currency,
-    customer: { name: customerName, phone: customerPhone },
+    merchant: {
+      id: mid,
+    },
+    customer: {
+      name: customerName,
+      phone: customerPhone,
+    },
     description,
-    redirectUrl: merchantRedirect,
-    webhookUrl,
-    signature,
-    mode,
-    mid,
+    settings: {
+      webhookUrl,
+      callbackUrl,
+    },
   };
 
-  const endpoint = 'https://checkout.kashier.io/v1/payments'; // بيئة الإنتاج (Live) فقط — لا روابط اختبار
-
+  const endpoint = 'https://api.kashier.io/v1/payment-sessions';
   const response = await axios.post(endpoint, requestBody, {
     headers: {
       'Content-Type': 'application/json',
@@ -54,18 +57,18 @@ async function createKashierSession(orderId, amount, customerName, customerPhone
     timeout: 10000,
   });
 
-  // بيانات عامة فقط — لا يحتوي الرد على KASHIER_SECRET_KEY ولا KASHIER_API_KEY
+  if (!response.data || !response.data.id) {
+    throw new Error('فشل في إنشاء جلسة الدفع مع Kashier');
+  }
+
+  // رجع Session ID + معلومات آمنة فقط
   return {
+    sessionId: response.data.id,
     orderId,
-    sessionId: orderId,
     amount: formattedAmount,
     currency,
-    mid,
-    mode,
-    signature,
-    merchantRedirect,
-    webhookUrl,
-    paymentUrl: response.data?.paymentUrl || response.data?.url || null,
+    paymentUrl: response.data.paymentUrl || null,
+    status: response.data.status || 'PENDING',
   };
 }
 

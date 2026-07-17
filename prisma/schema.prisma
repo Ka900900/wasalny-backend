@@ -11,6 +11,7 @@ enum VehicleType {
   PRIVATE_CAR
   TAXI
   SCOOTER
+  MOTORCYCLE
 }
 
 enum ServiceTier {
