@@ -5,20 +5,20 @@ const { authenticateToken } = require('../middleware/auth');
 const upload = require('../middlewares/upload.middleware');
 
 /**
- * POST /api/v1/upload
- * Upload a single image to Cloudinary
+ * Shared handler for all image upload endpoints.
  * Field Name: image (must match Flutter MultipartRequest)
  *
  * Middleware order:
  *   1. authenticateToken  ← JWT verification (reads only headers)
  *   2. upload.single('image')  ← Multer parses multipart body
- *   3. Controller handler
+ *   3. uploadHandler
  *
  * No express.json() in this route — Multer handles body parsing.
  */
-router.post('/', authenticateToken, upload.single('image'), async (req, res) => {
+async function uploadHandler(req, res) {
   try {
     console.log('========== Upload Request ==========');
+    console.log('Endpoint:', req.originalUrl);
     console.log('User:', req.user);
     console.log('File Exists:', !!req.file);
 
@@ -69,6 +69,16 @@ router.post('/', authenticateToken, upload.single('image'), async (req, res) => 
       message: error.message || 'An error occurred during upload',
     });
   }
-});
+}
+
+// ── Upload Endpoints ──────────────────────────────
+// Each matches a specific Flutter screen (no Flutter changes needed)
+
+router.post('/',         authenticateToken, upload.single('image'), uploadHandler);
+router.post('/profile',  authenticateToken, upload.single('image'), uploadHandler);
+router.post('/license',  authenticateToken, upload.single('image'), uploadHandler);
+router.post('/id-card',  authenticateToken, upload.single('image'), uploadHandler);
+router.post('/car',      authenticateToken, upload.single('image'), uploadHandler);
+router.post('/insurance',authenticateToken, upload.single('image'), uploadHandler);
 
 module.exports = router;
