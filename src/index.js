@@ -100,7 +100,17 @@ const generalLimiter = rateLimit({
 // ── Middleware ───────────────────────────────────────
 app.use(cors());
 app.use(generalLimiter);
-app.use(express.json());
+
+// جعل express.json() شرطياً حتى لا يتعارض مع Multer في رفع الملفات
+const jsonParser = express.json();
+app.use((req, res, next) => {
+  const contentType = req.headers['content-type'] || '';
+  // Skip JSON parser for multipart requests — multer handles those
+  if (contentType.includes('multipart/form-data')) {
+    return next();
+  }
+  jsonParser(req, res, next);
+});
 
 // >>> TEMP: request logger (live monitoring) <<<
 app.use((req, res, next) => {
@@ -1282,41 +1292,34 @@ app.get('/api/v1/wallet/withdraws', authenticateToken, requireRole('DRIVER'), as
  */
 app.post('/api/v1/wallet/top-up', authenticateToken, validate(topUpSchema), async (req, res) => {
   const { amount, paymentMethod } = req.body;
+  const userId = req.user.userId;
   try {
-    // For card payments, create a Kashier session
-    if (paymentMethod === 'card') {
-      const user = await prisma.user.findUnique({ where: { id: req.user.userId } });
+    // كل طرق الدفع التي تمر عبر كاشير (بطاقة، محفظة إلكترونية، إنستاباي)
+    const kashierMethods = ['card', 'vodafone_cash', 'instapay'];
+    if (kashierMethods.includes(paymentMethod)) {
+      const user = await prisma.user.findUnique({ where: { id: userId } });
       const session = await createKashierSession(
-        `topup_${req.user.userId}_${Date.now()}`,
+        `topup_${userId}_${Date.now()}`,
         amount,
-        `${user.firstName} ${user.lastName}`,
-        user.phoneNumber,
-        'شحن محفظة وصلني'
+        'شحن محفظة وصلني',
+        paymentMethod
       );
       return res.json({
         message: 'تم إنشاء رابط الدفع',
         paymentUrl: session.paymentUrl,
-        sessionId: session.orderId,
+        sessionUrl: session.sessionUrl,
+        sessionId: session.sessionId,
       });
     }
 
-    // Direct wallet top-up (e.g., promo/adjustment)
-    const wallet = await ensureWallet(req.user.userId);
-    await prisma.wallet.update({
-      where: { id: wallet.id },
-      data: { balance: { increment: amount } },
-    });
-    await prisma.walletTransaction.create({
-      data: {
-        walletId: wallet.id,
-        type: 'bonus',
-        amount,
-        description: 'شحن المحفظة',
-        status: 'completed',
-      },
-    });
+    // طريقة الدفع "wallet" تعني رصيد المحفظة الفعلي — غير مسموح به إلا إذا كان مبلغًا سلبيًا أو مستخدمًا إداريًا
+    if (paymentMethod === 'wallet') {
+      // يمكنك إضافة منطق هنا إذا كنت تريد السماح بشحن الرصيد من رصيد المحفظة الحالي للمستخدم
+      throw new Error('لا يمكن شحن الرصيد من رصيد المحفظة الحالي');
+    }
 
-    res.json({ message: 'تم شحن المحفظة', balance: wallet.balance + amount });
+    // غير مسموح به — رفض طرق الدفع غير المدعومة
+    throw new Error('طريقة الدفع غير مدعومة');
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'خطأ في شحن المحفظة' });
@@ -1363,14 +1366,13 @@ app.post('/api/v1/payments/kashier/initiate', authenticateToken, async (req, res
     const session = await createKashierSession(
       rideId,
       ride.price,
-      `${ride.rider.firstName} ${ride.rider.lastName}`,
-      ride.rider.phoneNumber,
       `دفع تكلفة الرحلة رقم ${rideId}`
     );
     res.json({
       message: 'تم إنشاء رابط الدفع',
       paymentUrl: session.paymentUrl,
-      sessionId: session.orderId,
+      sessionUrl: session.sessionUrl,
+      sessionId: session.sessionId,
     });
   } catch (error) {
     console.error('Kashier error:', error.response?.data || error.message);
@@ -1572,12 +1574,16 @@ app.post('/api/webhooks/kashier', express.raw({ type: 'application/json' }), asy
     if (!signature) return res.status(400).send('Missing signature');
     const payload = req.body.toString();
 
+    console.log('[Webhook] Received payload (signature redacted)');
+
     if (!verifyWebhookSignature(payload, signature)) {
-      console.error('❌ Invalid webhook signature');
+      console.error('[Webhook] ❌ Invalid signature');
       return res.status(401).send('Invalid signature');
     }
 
     const event = JSON.parse(payload);
+    console.log('[Webhook] Verified event:', JSON.stringify({ status: event.status, orderId: event.orderId, amount: event.amount, sessionId: event.sessionId }));
+
     if (event.status !== 'PAID') return res.status(200).send('OK');
 
     const orderId = event.orderId;
@@ -1589,32 +1595,42 @@ app.post('/api/webhooks/kashier', express.raw({ type: 'application/json' }), asy
       const amount = parseFloat(event.amount);
       if (!userId || !amount || amount <= 0) return res.status(200).send('OK');
 
-      // منع الاحتساب المكرر لنفس العملية
+      // منع الاحتساب المكرر لنفس العملية (idempotent)
       const already = await prisma.walletTransaction.findFirst({
         where: { type: 'TOPUP', metadata: { path: ['orderId'], equals: orderId } },
       });
       if (already) {
-        console.log(`⏭️ Topup ${orderId} already credited`);
+        console.log(`[Webhook] ⏭️ Topup ${orderId} already credited`);
         return res.status(200).send('OK');
       }
 
-      const wallet = await prisma.wallet.upsert({
-        where: { userId },
-        update: { balance: { increment: amount } },
-        create: { userId, balance: amount },
+      // عملية ذرية: تحديث الرصيد + تسجيل المعاملة في نفس transaction
+      const result = await prisma.$transaction(async (tx) => {
+        const wallet = await tx.wallet.upsert({
+          where: { userId },
+          update: { balance: { increment: amount } },
+          create: { userId, balance: amount },
+        });
+        const txn = await tx.walletTransaction.create({
+          data: {
+            walletId: wallet.id,
+            type: 'TOPUP',
+            amount,
+            balanceAfter: wallet.balance,
+            description: 'شحن المحفظة عبر كاشير',
+            status: 'COMPLETED',
+            metadata: { orderId },
+          },
+        });
+        // تحديث حالة جلسة الدفع
+        await tx.paymentSession.updateMany({
+          where: { orderId },
+          data: { status: 'PAID', updatedAt: new Date() },
+        });
+        return { wallet, txn };
       });
-      await prisma.walletTransaction.create({
-        data: {
-          walletId: wallet.id,
-          type: 'TOPUP',
-          amount,
-          balanceAfter: wallet.balance,
-          description: 'شحن المحفظة عبر كاشير',
-          status: 'COMPLETED',
-          metadata: { orderId },
-        },
-      });
-      console.log(`✅ Wallet topped up for user ${userId} by ${amount}`);
+
+      console.log(`[Webhook] ✅ Wallet topped up: user=${userId} amount=${amount} newBalance=${result.wallet.balance}`);
       return res.status(200).send('OK');
     }
 
@@ -1633,10 +1649,10 @@ app.post('/api/webhooks/kashier', express.raw({ type: 'application/json' }), asy
       // المحفظة: التسوية تمت عند إكمال الرحلة — نؤكّد الدفع فقط
       await prisma.rideRequest.update({ where: { id: orderId }, data: { isPaid: true, paidAt: new Date() } });
     }
-    console.log(`✅ Payment confirmed for ride ${orderId}`);
-    res.status(200).send('OK');
+    console.log(`[Webhook] ✅ Payment confirmed for ride ${orderId}`);
+    return res.status(200).send('OK');
   } catch (error) {
-    console.error('Webhook error:', error);
+    console.error('[Webhook] Error:', error);
     res.status(500).send('Internal error');
   }
 });
@@ -1680,6 +1696,19 @@ app.get('/', (req, res) => {
 // ── Error Handlers ──────────────────────────────────
 app.use(notFoundHandler);
 app.use(errorHandler);
+
+// ── Startup Validation: Kashier config ─────────────
+// التحقق من وجود متغيّرات كاشير المطلوبة قبل تشغيل السيرفر
+(function validateKashierConfig() {
+  const required = ['KASHIER_API_KEY', 'KASHIER_SECRET_KEY', 'KASHIER_MID', 'APP_URL', 'KASHIER_MODE'];
+  const missing = required.filter((key) => !process.env[key]);
+  if (missing.length) {
+    console.error('❌ فشل التشغيل: متغيّرات بيئة كاشier ناقصة:');
+    missing.forEach((k) => console.error(`   - ${k}`));
+    console.error('يرجى تعيين هذه المتغيّرات في ملف .env قبل تشغيل السيرفر.');
+    process.exit(1);
+  }
+})();
 
 // ── Initialize Firebase (lazy on first use) ─────────
 try {

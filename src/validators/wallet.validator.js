@@ -36,7 +36,7 @@ const topUpSchema = {
       'number.positive': 'المبلغ يجب أن يكون أكبر من صفر',
     }),
     paymentMethod: Joi.string()
-      .valid('card', 'wallet')
+      .valid('card', 'vodafone_cash', 'instapay')
       .optional()
       .default('card'),
   }),

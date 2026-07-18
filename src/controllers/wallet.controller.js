@@ -1,5 +1,5 @@
 const { getWalletBalance, getTransactions, requestWithdrawal, getWithdraws, topUpWallet } = require('../services/wallet.service');
-const { generateKashierCheckoutHash, createKashierSession, queryKashierTransaction } = require('../services/kashier');
+const { createKashierSession, queryKashierTransaction } = require('../services/kashier');
 const prisma = require('../config/prisma');
 
 async function getWalletBalanceHandler(req, res) {
@@ -55,7 +55,12 @@ async function topUpWalletHandler(req, res) {
   try {
     const result = await topUpWallet(req.user.userId, req.body);
     if (result.paymentUrl) {
-      return res.json({ message: 'تم إنشاء رابط الدفع', paymentUrl: result.paymentUrl, sessionId: result.sessionId });
+      return res.json({
+        message: 'تم إنشاء رابط الدفع',
+        paymentUrl: result.paymentUrl,
+        sessionUrl: result.sessionUrl,
+        sessionId: result.sessionId,
+      });
     }
     res.json({ message: 'تم شحن المحفظة', balance: result.balance });
   } catch (error) {
@@ -71,7 +76,7 @@ async function topUpWalletHandler(req, res) {
  */
 async function initiatePaymentHandler(req, res) {
   try {
-    const { amount } = req.body;
+    const { amount, paymentMethod } = req.body;
     const userId = req.user?.userId;
 
     if (!amount || Number(amount) <= 0) {
@@ -80,6 +85,12 @@ async function initiatePaymentHandler(req, res) {
 
     if (!userId) {
       return res.status(401).json({ error: 'المستخدم غير مصرح' });
+    }
+
+    // التحقق من طريقة الدفع المدعومة
+    const supportedMethods = ['card', 'vodafone_cash', 'instapay'];
+    if (paymentMethod && !supportedMethods.includes(paymentMethod)) {
+      return res.status(400).json({ error: 'طريقة الدفع غير مدعومة' });
     }
 
     const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -91,18 +102,18 @@ async function initiatePaymentHandler(req, res) {
     const session = await createKashierSession(
       orderId,
       amount,
-      `${user.firstName} ${user.lastName}`,
-      user.phoneNumber || '',
       'شحن محفظة وصلني'
     );
 
     res.json({
       success: true,
       sessionId: session.sessionId,
+      sessionUrl: session.sessionUrl,
       paymentUrl: session.paymentUrl,
       orderId: session.orderId,
       amount: session.amount,
       currency: session.currency,
+      status: session.status,
     });
   } catch (error) {
     console.error('Initiate payment error:', error);
@@ -128,7 +139,10 @@ async function kashierCheckoutPageHandler(req, res) {
       return res.status(400).send('<h1 style="color:red;text-align:center;margin-top:50px;">❌ المبلغ غير صالح</h1>');
     }
 
-    const user = await prisma.user.findUnique({ where: { id: userId } });
+    // نبحث بالـ id الداخلي أو firebaseUid (جوجل) لدعم كلا الحالتين
+    const user = await prisma.user.findFirst({
+      where: { OR: [ { id: userId }, { firebaseUid: userId } ] },
+    });
     if (!user) {
       return res.status(404).send('<h1 style="color:red;text-align:center;margin-top:50px;">❌ المستخدم غير موجود</h1>');
     }
@@ -225,21 +239,36 @@ async function kashierCallbackHandler(req, res) {
           <p style="text-align:center;">يرجى المحاولة لاحقاً أو التواصل مع الدعم.</p>`);
     }
 
-    const wallet = await prisma.wallet.upsert({
-      where: { userId },
-      update: { balance: { increment: remote.amount || 0 } },
-      create: { userId, balance: remote.amount || 0 },
+    // userId هنا قد يكون cuid أو firebaseUid — نحلّه لأول مستخدم مطابق
+    const walletUser = await prisma.user.findFirst({
+      where: { OR: [ { id: userId }, { firebaseUid: userId } ] },
     });
-    await prisma.walletTransaction.create({
-      data: {
-        walletId: wallet.id,
-        type: 'TOPUP',
-        amount: remote.amount || 0,
-        balanceAfter: wallet.balance,
-        description: 'شحن المحفظة عبر كاشير (Checkout)',
-        status: 'COMPLETED',
-        metadata: { orderId: order, method: 'kashier-checkout' },
-      },
+    if (!walletUser) {
+      return res
+        .status(404)
+        .setHeader('Content-Type', 'text/html; charset=utf-8')
+        .send(`<h1 style="color:red;text-align:center;margin-top:50px;">❌ المستخدم غير موجود</h1>`);
+    }
+
+    // عملية ذرية: تحديث الرصيد + تسجيل المعاملة في نفس Prisma transaction
+    const { wallet } = await prisma.$transaction(async (tx) => {
+      const w = await tx.wallet.upsert({
+        where: { userId: walletUser.id },
+        update: { balance: { increment: remote.amount || 0 } },
+        create: { userId: walletUser.id, balance: remote.amount || 0 },
+      });
+      await tx.walletTransaction.create({
+        data: {
+          walletId: w.id,
+          type: 'TOPUP',
+          amount: remote.amount || 0,
+          balanceAfter: w.balance,
+          description: 'شحن المحفظة عبر كاشير (Checkout)',
+          status: 'COMPLETED',
+          metadata: { orderId: order, method: 'kashier-checkout' },
+        },
+      });
+      return { wallet: w };
     });
 
     res

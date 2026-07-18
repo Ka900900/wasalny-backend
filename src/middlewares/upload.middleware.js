@@ -4,10 +4,10 @@
  * Allowed formats: jpeg, png, jpg.
  */
 const multer = require('multer');
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const CloudinaryStorage = require('multer-storage-cloudinary');
 const cloudinary = require('../config/cloudinary');
 
-const storage = new CloudinaryStorage({
+const storage = CloudinaryStorage({
   cloudinary,
   params: {
     folder: 'wasalny',

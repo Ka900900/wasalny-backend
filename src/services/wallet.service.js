@@ -74,18 +74,36 @@ async function getWithdraws(userId) {
 }
 
 async function topUpWallet(userId, { amount, paymentMethod }) {
-  const amt = new Prisma.Decimal(amount);
+  const parsedAmount = Number(amount);
+  if (
+    amount === null ||
+    amount === undefined ||
+    Number.isNaN(parsedAmount) ||
+    parsedAmount <= 0
+  ) {
+    throw new Error('المبلغ غير صالح');
+  }
 
-  if (paymentMethod === 'card') {
+  // رفض طرق الدفع غير المدعومة
+  const supportedMethods = ['card', 'vodafone_cash', 'instapay'];
+  if (paymentMethod && !supportedMethods.includes(paymentMethod)) {
+    throw new Error('طريقة الدفع غير مدعومة');
+  }
+
+  const amt = new Prisma.Decimal(parsedAmount);
+
+  // كل طرق الدفع التي تمر عبر كاشير (بطاقة، محفظة إلكترونية، إنستاباي)
+  const kashierMethods = ['card', 'vodafone_cash', 'instapay'];
+
+  if (kashierMethods.includes(paymentMethod)) {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     const session = await createKashierSession(
       `topup_${userId}_${Date.now()}`,
-      amount,
-      `${user.firstName} ${user.lastName}`,
-      user.phoneNumber,
-      'شحن محفظة وصلني'
+      parsedAmount,
+      'شحن محفظة وصلني',
+      paymentMethod
     );
-    return { paymentUrl: session.paymentUrl, sessionId: session.orderId };
+    return { paymentUrl: session.paymentUrl, sessionId: session.sessionId, sessionUrl: session.sessionUrl };
   }
 
   const wallet = await ensureWallet(userId);

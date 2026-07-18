@@ -4,47 +4,25 @@ const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const axios = require('axios');
 const crypto = require('crypto');
+const uploadRoutes = require('./src/routes/upload.routes');
+
+
 
 const app = express();
 const prisma = require('./src/config/prisma');
 const JWT_SECRET = process.env.JWT_SECRET || "wasalny_secret";
 
-// --- إعدادات بوابة الدفع Kashier ---
-async function createKashierSession(orderId, amount, customerName, customerPhone, description) {
-  const KASHIER_MID = process.env.KASHIER_MID;
-  const KASHIER_CURRENCY = 'EGP';
-  const formattedAmount = Number(amount).toFixed(2);
-  const path = `/?payment=${KASHIER_MID}.${orderId}.${formattedAmount}.${KASHIER_CURRENCY}`;
-  const signature = crypto.createHmac('sha256', KASHIER_SECRET_KEY).update(path).digest('hex');
-
-  const requestBody = {
-    orderId,
-    amount: formattedAmount,
-    currency: 'EGP',
-    customer: { name: customerName, phone: customerPhone },
-    description,
-    redirectUrl: `${APP_URL}/payment/callback`,
-    webhookUrl: `${APP_URL}/api/webhooks/kashier`,
-    signature,
-    mode: KASHIER_MODE,
-    mid: KASHIER_MID,
-  };
-
-  const endpoint = KASHIER_MODE === 'test'
-    ? 'https://test.checkout.kashier.io/v1/payments'
-    : 'https://checkout.kashier.io/v1/payments';
-
-  const response = await axios.post(endpoint, requestBody, {
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${KASHIER_API_KEY}`,
-    },
-  });
-  return response.data;
-}
-
 app.use(cors());
-app.use(express.json());
+
+// جعل express.json() شرطياً حتى لا يتعارض مع Multer في رفع الملفات
+const jsonParser = express.json();
+app.use((req, res, next) => {
+  const contentType = req.headers['content-type'] || '';
+  if (contentType.includes('multipart/form-data')) {
+    return next();
+  }
+  jsonParser(req, res, next);
+});
 
 // دالة حساب المسافة التقريبية (هافرسين)
 function haversineDistance(lat1, lon1, lat2, lon2) {
@@ -84,6 +62,9 @@ const authenticateToken = (req, res, next) => {
 app.get('/', (req, res) => {
   res.send('🚀 خادم وصلني يعمل بنجاح');
 });
+
+// رفع الصور إلى Cloudinary
+app.use('/api/v1/upload', uploadRoutes);
 
 // 1. تسجيل/دخول - إرسال OTP (محسّن للأداء)
 app.post('/register', async (req, res) => {

@@ -246,6 +246,17 @@ model PaymentMethod {
   createdAt     DateTime @default(now())
 }
 
+model PaymentSession {
+  id            String   @id @default(cuid())
+  orderId       String   @unique
+  sessionId     String
+  paymentMethod String?
+  amount        Decimal? @db.Decimal(10, 2)
+  status        String   @default("CREATED")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
 model Config {
   id          String   @id @default(cuid())
   key         String   @unique

@@ -122,22 +122,18 @@ async function initiateKashierPaymentHandler(req, res) {
     const session = await createKashierSession(
       rideId,
       ride.price,
-      `${ride.rider.firstName} ${ride.rider.lastName}`,
-      ride.rider.phoneNumber,
       `دفع تكلفة الرحلة رقم ${rideId}`
     );
 
-    // نعيد للتطبيق البيانات العامة اللازمة فقط:
-    // التوقيع مشتق من السر لكنه خاص بهذه العملية وآمن للإرسال، والسر نفسه لا يُرسل أبداً.
     res.json({
       message: 'تم إنشاء جلسة الدفع',
       paymentUrl: session.paymentUrl,
+      sessionUrl: session.sessionUrl,
+      sessionId: session.sessionId,
       orderId: session.orderId,
-      signature: session.signature,
-      mid: session.mid,
       amount: session.amount,
       currency: session.currency,
-      mode: session.mode,
+      status: session.status,
     });
   } catch (error) {
     console.error('Kashier error:', error.response?.data || error.message);
