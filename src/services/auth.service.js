@@ -1,6 +1,7 @@
 const { verifyFirebaseToken } = require("../config/firebase");
 const userRepository = require("../repositories/user.repository");
 const prisma = require("../config/prisma");
+const { generateToken } = require("../middleware/auth");
 
 // يضمن وجود محفظة (برصيد 0) لأي مستخدم جديد لتفادي أخطاء 500 لاحقاً
 async function ensureWallet(userId) {
@@ -29,8 +30,10 @@ async function login(idToken) {
     await ensureWallet(user.id);
   }
   await userRepository.updateLastLogin(user.id);
+  const token = generateToken(user.id, user.role);
   return {
     success: true,
+    token,
     user,
   };
 }
