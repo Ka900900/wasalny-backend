@@ -230,14 +230,23 @@ async function kashierCallbackHandler(req, res) {
       resolvedUserId = order.split('_')[1];
     }
 
-    const success = status === 'success' || paymentStatus === 'PAID' || paymentStatus === 'success';
-
-    if (!success || !resolvedUserId || !order) {
+    if (!resolvedUserId || !order) {
       return res
         .status(400)
         .setHeader('Content-Type', 'text/html; charset=utf-8')
         .send(`<h1 style="color:red;text-align:center;margin-top:50px;">❌ فشل الدفع</h1>
           <p style="text-align:center;">لم يتم تأكيد العملية، يرجى المحاولة مرة أخرى.</p>`);
+    }
+
+    // كاشير v3 بيرجّع sessionId في الـ redirect بدون status واضح —
+    // نعتمد على الاستعلام server-side لتأكيد نجاح الدفع بدل الثقة في الـ query.
+    const remote = await queryKashierTransaction(order);
+    if (!remote?.paid) {
+      return res
+        .status(402)
+        .setHeader('Content-Type', 'text/html; charset=utf-8')
+        .send(`<h1 style="color:red;text-align:center;margin-top:50px;">❌ لم يتم تأكيد الدفع لدى البنك</h1>
+          <p style="text-align:center;">يرجى المحاولة لاحقاً أو التواصل مع الدعم.</p>`);
     }
 
     // منع الاحتساب المكرر لنفس العملية
@@ -249,16 +258,6 @@ async function kashierCallbackHandler(req, res) {
         .setHeader('Content-Type', 'text/html; charset=utf-8')
         .send(`<h1 style="color:green;text-align:center;margin-top:50px;">✅ تم شحن المحفظة بنجاح</h1>
           <p style="text-align:center;">تم تأكيد العملية مسبقاً.</p>`);
-    }
-
-    // استعلام Server-side للتأكد قبل تحديث الرصيد
-    const remote = await queryKashierTransaction(order);
-    if (!remote?.paid) {
-      return res
-        .status(402)
-        .setHeader('Content-Type', 'text/html; charset=utf-8')
-        .send(`<h1 style="color:red;text-align:center;margin-top:50px;">❌ لم يتم تأكيد الدفع لدى البنك</h1>
-          <p style="text-align:center;">يرجى المحاولة لاحقاً أو التواصل مع الدعم.</p>`);
     }
 
     // userId هنا قد يكون cuid أو firebaseUid — نحلّه لأول مستخدم مطابق
