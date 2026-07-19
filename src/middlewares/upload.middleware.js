@@ -1,6 +1,13 @@
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const cloudinaryStorageModule = require('multer-storage-cloudinary');
+
+// multer-storage-cloudinary exports differently across versions:
+//   v2.x: default export = factory function
+//   v4.x: named export { CloudinaryStorage } = factory function
+// In both cases it is a FACTORY (call without `new`).
+const CloudinaryStorage =
+  cloudinaryStorageModule.CloudinaryStorage || cloudinaryStorageModule;
 
 // إعداد Cloudinary
 cloudinary.config({
@@ -10,7 +17,7 @@ cloudinary.config({
 });
 
 // إنشاء Storage
-const storage = new CloudinaryStorage({
+const storage = CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
     folder: 'wasalny',
