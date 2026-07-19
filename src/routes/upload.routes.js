@@ -4,6 +4,22 @@ const router = express.Router();
 const { authenticateToken } = require('../middleware/auth');
 const upload = require('../middlewares/upload.middleware');
 
+// Multer error wrapper — converts Multer/Cloudinary failures into clean
+// JSON responses instead of letting them bubble up as a 502 from the proxy.
+const withUpload = (handler) => (req, res, next) => {
+  upload.single('image')(req, res, (err) => {
+    if (err) {
+      console.error('[upload] middleware error:', err.message);
+      const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+      return res.status(status).json({
+        success: false,
+        message: err.message || 'Upload failed',
+      });
+    }
+    return handler(req, res, next);
+  });
+};
+
 // Upload Handler
 const uploadHandler = async (req, res) => {
   try {
@@ -42,16 +58,16 @@ const uploadHandler = async (req, res) => {
 };
 
 // جميع المسارات المطلوبة بواسطة Flutter
-router.post('/', authenticateToken, upload.single('image'), uploadHandler);
+router.post('/', authenticateToken, withUpload(uploadHandler));
 
-router.post('/profile', authenticateToken, upload.single('image'), uploadHandler);
+router.post('/profile', authenticateToken, withUpload(uploadHandler));
 
-router.post('/license', authenticateToken, upload.single('image'), uploadHandler);
+router.post('/license', authenticateToken, withUpload(uploadHandler));
 
-router.post('/id-card', authenticateToken, upload.single('image'), uploadHandler);
+router.post('/id-card', authenticateToken, withUpload(uploadHandler));
 
-router.post('/car', authenticateToken, upload.single('image'), uploadHandler);
+router.post('/car', authenticateToken, withUpload(uploadHandler));
 
-router.post('/insurance', authenticateToken, upload.single('image'), uploadHandler);
+router.post('/insurance', authenticateToken, withUpload(uploadHandler));
 
 module.exports = router;

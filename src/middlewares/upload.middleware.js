@@ -7,6 +7,19 @@ const multer = require('multer');
 const CloudinaryStorage = require('multer-storage-cloudinary');
 const cloudinary = require('../config/cloudinary');
 
+// Validate Cloudinary config early so misconfiguration surfaces as a clear
+// 500 JSON response instead of an opaque 502 from the proxy.
+function assertCloudinaryConfig() {
+  const { cloud_name, api_key, api_secret } = cloudinary.v2.config() || {};
+  if (!cloud_name || !api_key || !api_secret) {
+    throw new Error(
+      'Cloudinary is not configured. Set CLOUDINARY_CLOUD_NAME, ' +
+        'CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET environment variables.',
+    );
+  }
+}
+assertCloudinaryConfig();
+
 const storage = CloudinaryStorage({
   cloudinary,
   params: {
@@ -24,7 +37,7 @@ const upload = multer({
     if (allowed.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error('نوع الملف غير مدعوم. استخدم jpeg أو png أو jpg'), false);
+      cb(new Error('Unsupported file type. Use jpeg, png or jpg'), false);
     }
   },
 });
