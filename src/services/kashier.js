@@ -86,6 +86,17 @@ async function createKashierSession(orderId, amount, description, paymentMethod,
   const merchantRedirect = `${appUrl}/api/v1/wallet/kashier-callback?orderId=${orderId}`;
   const serverWebhook = `${appUrl}/api/webhooks/kashier`;
 
+  // خريطة طريقة الدفع → الـ allowedMethods المقبولة من Kashier
+  // card      → بطاقة ائتمان/خصم فقط
+  // vodafone_cash / instapay / wallet → محافظ إلكترونية فقط
+  const method = (paymentMethod || 'card').toLowerCase();
+  let allowedMethods = 'card,wallet'; // الافتراضي: الاتنين
+  if (method === 'card') {
+    allowedMethods = 'card';
+  } else if (method === 'vodafone_cash' || method === 'instapay' || method === 'wallet') {
+    allowedMethods = 'wallet';
+  }
+
   // جسم الطلب الرسمي لـ v3 (انتهاء الصلاحية بعد 30 دقيقة)
   const expireAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
   const requestBody = {
@@ -99,8 +110,9 @@ async function createKashierSession(orderId, amount, description, paymentMethod,
     serverWebhook,
     display: 'ar',
     type: 'external',
+    allowedMethods,
     description: (description || '').toString().slice(0, 119),
-    metaData: { source: 'wasalny', orderId, paymentMethod: paymentMethod || 'card' },
+    metaData: { source: 'wasalny', orderId, paymentMethod: method },
     customer: {
       reference: customer?.id || customer?.firebaseUid || undefined,
       name: `${customer?.firstName || ''} ${customer?.lastName || ''}`.trim() || 'Wasalny User',
