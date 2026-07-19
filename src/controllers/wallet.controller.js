@@ -98,11 +98,21 @@ async function initiatePaymentHandler(req, res) {
       return res.status(404).json({ error: 'المستخدم غير موجود' });
     }
 
+    // التحقق من اكتمال بيانات العميل قبل إرسالها لـ Kashier
+    const phoneIsPlaceholder = (user.phoneNumber || '').startsWith('firebase:');
+    if (!user.email || phoneIsPlaceholder) {
+      return res.status(400).json({
+        error: 'برجاء إكمال بيانات حسابك (البريد الإلكتروني ورقم الهاتف) قبل الشحن',
+      });
+    }
+
     const orderId = `topup_${userId}_${Date.now()}`;
     const session = await createKashierSession(
       orderId,
       amount,
-      'شحن محفظة وصلني'
+      'شحن محفظة وصلني',
+      paymentMethod,
+      user
     );
 
     res.json({

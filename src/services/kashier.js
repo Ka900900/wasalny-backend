@@ -59,7 +59,7 @@ function getKashierHeaders() {
  *   status: string
  * }}
  */
-async function createKashierSession(orderId, amount, description, paymentMethod) {
+async function createKashierSession(orderId, amount, description, paymentMethod, customer) {
   const mid = process.env.KASHIER_MID;
   const secretKey = process.env.KASHIER_SECRET_KEY;
   const apiKey = process.env.KASHIER_API_KEY;
@@ -102,6 +102,11 @@ async function createKashierSession(orderId, amount, description, paymentMethod)
     type: 'external',
     description: (description || '').toString().slice(0, 119),
     metaData: { source: 'wasalny', orderId, paymentMethod: paymentMethod || 'card' },
+    customer: {
+      name: `${customer?.firstName || ''} ${customer?.lastName || ''}`.trim() || 'Wasalny User',
+      email: customer?.email || undefined,
+      phone: customer?.phoneNumber || undefined,
+    },
   };
 
   const endpoint = `${getKashierBaseUrl()}/v3/payment/sessions`;
