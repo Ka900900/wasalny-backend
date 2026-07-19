@@ -215,12 +215,24 @@ async function kashierCheckoutPageHandler(req, res) {
  */
 async function kashierCallbackHandler(req, res) {
   try {
-    const { userId, status, orderId, merchantOrderId, paymentStatus } = req.query;
-    const order = orderId || merchantOrderId;
+    const { userId, status, orderId, merchantOrderId, paymentStatus, sessionId } = req.query;
+
+    // كاشير v3 بيرجّع sessionId في الـ redirect — نربطه بـ orderId عبر جدول paymentSession
+    let order = orderId || merchantOrderId;
+    if (!order && sessionId) {
+      const stored = await prisma.paymentSession.findFirst({ where: { sessionId } });
+      if (stored) order = stored.orderId;
+    }
+
+    // استنتاج userId من بادئة orderId (topup_${userId}_${timestamp)
+    let resolvedUserId = userId;
+    if (!resolvedUserId && order && order.startsWith('topup_')) {
+      resolvedUserId = order.split('_')[1];
+    }
 
     const success = status === 'success' || paymentStatus === 'PAID' || paymentStatus === 'success';
 
-    if (!success || !userId || !order) {
+    if (!success || !resolvedUserId || !order) {
       return res
         .status(400)
         .setHeader('Content-Type', 'text/html; charset=utf-8')
@@ -251,7 +263,7 @@ async function kashierCallbackHandler(req, res) {
 
     // userId هنا قد يكون cuid أو firebaseUid — نحلّه لأول مستخدم مطابق
     const walletUser = await prisma.user.findFirst({
-      where: { OR: [ { id: userId }, { firebaseUid: userId } ] },
+      where: { OR: [ { id: resolvedUserId }, { firebaseUid: resolvedUserId } ] },
     });
     if (!walletUser) {
       return res

@@ -1302,7 +1302,8 @@ app.post('/api/v1/wallet/top-up', authenticateToken, validate(topUpSchema), asyn
         `topup_${userId}_${Date.now()}`,
         amount,
         'شحن محفظة وصلني',
-        paymentMethod
+        paymentMethod,
+        user
       );
       return res.json({
         message: 'تم إنشاء رابط الدفع',
@@ -1366,7 +1367,9 @@ app.post('/api/v1/payments/kashier/initiate', authenticateToken, async (req, res
     const session = await createKashierSession(
       rideId,
       ride.price,
-      `دفع تكلفة الرحلة رقم ${rideId}`
+      `دفع تكلفة الرحلة رقم ${rideId}`,
+      ride.paymentMethod,
+      ride.rider
     );
     res.json({
       message: 'تم إنشاء رابط الدفع',
@@ -1586,7 +1589,14 @@ app.post('/api/webhooks/kashier', express.raw({ type: 'application/json' }), asy
 
     if (event.status !== 'PAID') return res.status(200).send('OK');
 
-    const orderId = event.orderId;
+    // كاشير v3 بيرجّع sessionId (_id) في الـ webhook — نربطه بـ orderId عبر جدول paymentSession
+    let orderId = event.orderId;
+    if (!orderId && (event.sessionId || event._id)) {
+      const stored = await prisma.paymentSession.findFirst({
+        where: { sessionId: event.sessionId || event._id },
+      });
+      if (stored) orderId = stored.orderId;
+    }
     if (!orderId) return res.status(200).send('OK');
 
     // شحن محفظة: orderId = topup_${userId}_${timestamp}

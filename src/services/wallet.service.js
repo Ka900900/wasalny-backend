@@ -101,7 +101,8 @@ async function topUpWallet(userId, { amount, paymentMethod }) {
       `topup_${userId}_${Date.now()}`,
       parsedAmount,
       'شحن محفظة وصلني',
-      paymentMethod
+      paymentMethod,
+      user
     );
     return { paymentUrl: session.paymentUrl, sessionId: session.sessionId, sessionUrl: session.sessionUrl };
   }

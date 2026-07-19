@@ -122,7 +122,9 @@ async function initiateKashierPaymentHandler(req, res) {
     const session = await createKashierSession(
       rideId,
       ride.price,
-      `دفع تكلفة الرحلة رقم ${rideId}`
+      `دفع تكلفة الرحلة رقم ${rideId}`,
+      ride.paymentMethod,
+      ride.rider
     );
 
     res.json({
