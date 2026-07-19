@@ -29,8 +29,6 @@ const { rateRideHandler } = require('./controllers/ride.controller');
 
 // Validators
 const {
-  registerSchema,
-  verifyOtpSchema,
   registerDriverSchema,
   firebaseLoginSchema,
 } = require('./validators/auth.validator');
@@ -143,15 +141,6 @@ app.use('/api/v1/support', supportRoutes);
 app.use('/api/v1/safety', safetyRoutes);
 app.use('/api/v1/upload', uploadRoutes);
 
-// ── Helper: Hash OTP ─────────────────────────────────
-async function hashOtp(otp) {
-  return bcrypt.hash(otp, 10);
-}
-
-async function compareOtp(otp, hash) {
-  return bcrypt.compare(otp, hash);
-}
-
 // ── Helper: Ensure Wallet exists ─────────────────────
 async function ensureWallet(userId) {
   let wallet = await prisma.wallet.findUnique({ where: { userId } });
@@ -186,125 +175,6 @@ app.post('/api/v1/rate', authenticateToken, validate(require('./validators/ride.
 // ═══════════════════════════════════════════════════════
 //  AUTH ENDPOINTS  /api/v1/auth
 // ═══════════════════════════════════════════════════════
-
-/**
- * @swagger
- * /api/v1/auth/send-otp:
- *   post:
- *     summary: Send OTP code for login/register [DEPRECATED - Use firebase-login instead]
- *     deprecated: true
- *     tags: [Auth]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [phoneNumber]
- *             properties:
- *               phoneNumber: { type: string, example: "+201234567890" }
- *               firstName: { type: string, example: "أحمد" }
- *               lastName: { type: string, example: "علي" }
- *     responses:
- *       200:
- *         description: OTP sent successfully
- */
-app.post('/api/v1/auth/send-otp', authLimiter, validate(registerSchema), async (req, res) => {
-  const { phoneNumber, firstName, lastName } = req.body;
-  const otp = Math.floor(1000 + Math.random() * 9000).toString();
-  const expiresAt = new Date(Date.now() + 10 * 60000); // 10 min expiry
-
-  try {
-    const hashedOtp = await hashOtp(otp);
-    let user = await prisma.user.findUnique({ where: { phoneNumber } });
-
-    if (user) {
-      user = await prisma.user.update({
-        where: { phoneNumber },
-        data: { otpCode: hashedOtp, otpExpiresAt: expiresAt, isVerified: false },
-      });
-    } else {
-      user = await prisma.user.create({
-        data: {
-          phoneNumber,
-          firstName: firstName || 'مستخدم',
-          lastName: lastName || 'جديد',
-          otpCode: hashedOtp,
-          otpExpiresAt: expiresAt,
-        },
-      });
-      // Create wallet for new user
-      await ensureWallet(user.id);
-    }
-
-    console.log(`📱 OTP for ${phoneNumber}: ${otp}`);
-    res.json({ message: 'تم إرسال الكود', maskedNumber: phoneNumber.replace(/\d(?=\d{4})/g, '*') });
-  } catch (error) {
-    console.error('Send OTP error:', error);
-    res.status(500).json({ error: 'خطأ في السيرفر' });
-  }
-});
-
-/**
- * @swagger
- * /api/v1/auth/verify-otp:
- *   post:
- *     summary: Verify OTP and get JWT token [DEPRECATED - Use firebase-login instead]
- *     deprecated: true
- *     tags: [Auth]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [phoneNumber, otp]
- *             properties:
- *               phoneNumber: { type: string }
- *               otp: { type: string }
- *     responses:
- *       200:
- *         description: Verification successful, returns token
- */
-app.post('/api/v1/auth/verify-otp', authLimiter, validate(verifyOtpSchema), async (req, res) => {
-  const { phoneNumber, otp } = req.body;
-  try {
-    const user = await prisma.user.findUnique({ where: { phoneNumber } });
-    if (!user || !user.otpExpiresAt || !user.otpCode) {
-      return res.status(400).json({ error: 'لم يتم طلب كود بعد' });
-    }
-    if (new Date() > user.otpExpiresAt) {
-      return res.status(400).json({ error: 'كود منتهي الصلاحية، أعد المحاولة' });
-    }
-
-    const isValid = await compareOtp(otp, user.otpCode);
-    if (!isValid) {
-      return res.status(400).json({ error: 'كود غير صحيح' });
-    }
-
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { isVerified: true, otpCode: null, otpExpiresAt: null },
-    });
-
-    const token = generateToken(user.id, user.role);
-    res.json({
-      message: 'تم التحقق بنجاح',
-      token,
-      user: {
-        id: user.id,
-        phoneNumber: user.phoneNumber,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role,
-        isVerified: true,
-      },
-    });
-  } catch (error) {
-    console.error('Verify OTP error:', error);
-    res.status(500).json({ error: 'خطأ في التحقق' });
-  }
-});
 
 /**
  * @swagger
@@ -1686,8 +1556,6 @@ app.get('/payment/callback', (req, res) => {
 });
 
 // Legacy routes backward compatibility (redirect to v1)
-app.post('/register', (req, res) => res.redirect(307, '/api/v1/auth/send-otp'));
-app.post('/verify-otp', (req, res) => res.redirect(307, '/api/v1/auth/verify-otp'));
 app.post('/register-driver', (req, res) => res.redirect(307, '/api/v1/auth/register-driver'));
 app.get('/me', (req, res) => res.redirect(307, '/api/v1/user/profile'));
 app.post('/request-ride', (req, res) => res.redirect(307, '/api/v1/rides/request'));

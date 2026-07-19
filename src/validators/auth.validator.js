@@ -1,35 +1,5 @@
 const Joi = require('joi');
 
-const registerSchema = {
-  body: Joi.object({
-    phoneNumber: Joi.string()
-      .pattern(/^\+?\d{10,15}$/)
-      .required()
-      .messages({
-        'string.pattern.base': 'رقم الهاتف غير صحيح',
-        'any.required': 'رقم الهاتف مطلوب',
-      }),
-    firstName: Joi.string().min(2).max(50).optional(),
-    lastName: Joi.string().min(2).max(50).optional(),
-  }),
-};
-
-const verifyOtpSchema = {
-  body: Joi.object({
-    phoneNumber: Joi.string()
-      .pattern(/^\+?\d{10,15}$/)
-      .required()
-      .messages({
-        'string.pattern.base': 'رقم الهاتف غير صحيح',
-        'any.required': 'رقم الهاتف مطلوب',
-      }),
-    otp: Joi.string().length(4).required().messages({
-      'string.length': 'كود التفعيل يجب أن يكون 4 أرقام',
-      'any.required': 'كود التفعيل مطلوب',
-    }),
-  }),
-};
-
 const registerDriverSchema = {
   body: Joi.object({
     phoneNumber: Joi.string()
@@ -75,4 +45,4 @@ const firebaseLoginSchema = {
   }),
 };
 
-module.exports = { registerSchema, verifyOtpSchema, registerDriverSchema, firebaseLoginSchema };
+module.exports = { registerDriverSchema, firebaseLoginSchema };

@@ -66,63 +66,6 @@ app.get('/', (req, res) => {
 // رفع الصور إلى Cloudinary
 app.use('/api/v1/upload', uploadRoutes);
 
-// 1. تسجيل/دخول - إرسال OTP (محسّن للأداء)
-app.post('/register', async (req, res) => {
-  const { phoneNumber, firstName, lastName } = req.body;
-  if (!phoneNumber) return res.status(400).json({ error: 'رقم الهاتف مطلوب' });
-
-  const otp = Math.floor(1000 + Math.random() * 9000).toString();
-  const expiresAt = new Date(Date.now() + 10 * 60000);
-
-  try {
-    // البحث عن المستخدم أولاً (أسرع من upsert في SQLite)
-    let user = await prisma.user.findUnique({ where: { phoneNumber } });
-
-    if (user) {
-      user = await prisma.user.update({
-        where: { phoneNumber },
-        data: { otpCode: otp, otpExpiresAt: expiresAt, isVerified: false },
-      });
-    } else {
-      user = await prisma.user.create({
-        data: {
-          phoneNumber,
-          firstName: firstName || 'مستخدم',
-          lastName: lastName || 'جديد',
-          otpCode: otp,
-          otpExpiresAt: expiresAt,
-        },
-      });
-    }
-
-    console.log(`OTP for ${phoneNumber}: ${otp}`);
-    res.json({ message: 'تم إرسال الكود' });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'خطأ في السيرفر' });
-  }
-});
-
-// 2. التحقق من OTP وإصدار التوكن
-app.post('/verify-otp', async (req, res) => {
-  const { phoneNumber, otp } = req.body;
-  try {
-    const user = await prisma.user.findUnique({ where: { phoneNumber } });
-    if (!user || !user.otpExpiresAt || user.otpCode !== otp || new Date() > user.otpExpiresAt) {
-      return res.status(400).json({ error: 'كود غير صحيح' });
-    }
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { isVerified: true, otpCode: null, otpExpiresAt: null },
-    });
-    const token = jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET, { expiresIn: '30d' });
-    res.json({ message: 'تم التحقق', token });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'خطأ في التحقق' });
-  }
-});
-
 // 3. تسجيل كابتن
 app.post('/register-driver', authenticateToken, async (req, res) => {
   if (req.user.role === 'DRIVER') {
