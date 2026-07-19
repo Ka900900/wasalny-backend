@@ -93,9 +93,8 @@ async function createKashierSession(orderId, amount, description, paymentMethod,
     maxFailureAttempts: 3,
     amount: formattedAmount,
     currency,
-    orderId, // v3 يستخدم orderId (وليس order)
+    order: orderId, // v3 يستخدم order (وليس orderId)
     merchantId: mid,
-    mode, // "live" أو "test"
     merchantRedirect,
     serverWebhook,
     display: 'ar',
@@ -103,6 +102,7 @@ async function createKashierSession(orderId, amount, description, paymentMethod,
     description: (description || '').toString().slice(0, 119),
     metaData: { source: 'wasalny', orderId, paymentMethod: paymentMethod || 'card' },
     customer: {
+      reference: customer?.id || customer?.firebaseUid || undefined,
       name: `${customer?.firstName || ''} ${customer?.lastName || ''}`.trim() || 'Wasalny User',
       email: customer?.email || undefined,
       phone: customer?.phoneNumber || undefined,
