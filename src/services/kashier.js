@@ -66,7 +66,7 @@ async function createKashierSession(orderId, amount, description, paymentMethod)
   const currency = 'EGP';
   const mode = (process.env.KASHIER_MODE || 'live').toLowerCase();
   const appUrl = process.env.APP_URL || 'https://wasalny-backend-production.up.railway.app';
-
+  
   // التحقق من صحة المبلغ قبل التحويل (البند 4)
   const numericAmount = Number(amount);
   if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
@@ -101,7 +101,7 @@ async function createKashierSession(orderId, amount, description, paymentMethod)
     display: 'ar',
     type: 'external',
     description: (description || '').toString().slice(0, 119),
-    metaData:{ source: 'wasalny', orderId, paymentMethod: paymentMethod || 'card' },
+    metaData: { source: 'wasalny', orderId, paymentMethod: paymentMethod || 'card' },
   };
 
   const endpoint = `${getKashierBaseUrl()}/v3/payment/sessions`;
