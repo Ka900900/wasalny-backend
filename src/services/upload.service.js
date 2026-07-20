@@ -92,6 +92,7 @@ function deleteImage(publicId) {
 module.exports = {
   validateFile,
   uploadBuffer,
+  uploadToCloudinary: uploadBuffer,
   deleteImage,
   ALLOWED_MIMES,
   MAX_FILE_SIZE,
