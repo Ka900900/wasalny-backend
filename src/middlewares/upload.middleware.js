@@ -1,5 +1,9 @@
 const multer = require('multer');
-const cloudinary = require('cloudinary').v2;
+// IMPORTANT: pass the FULL cloudinary module (not .v2) to multer-storage-cloudinary.
+// The library internally does `this.cloudinary.v2.uploader...`, so it needs the
+// top-level module that exposes `.v2`. Passing `.v2` directly causes
+// "Cannot read properties of undefined (reading 'uploader')".
+const cloudinary = require('cloudinary');
 const cloudinaryStorageModule = require('multer-storage-cloudinary');
 
 // multer-storage-cloudinary exports differently across versions:
@@ -9,14 +13,14 @@ const cloudinaryStorageModule = require('multer-storage-cloudinary');
 const CloudinaryStorage =
   cloudinaryStorageModule.CloudinaryStorage || cloudinaryStorageModule;
 
-// إعداد Cloudinary
-cloudinary.config({
+// إعداد Cloudinary (v2)
+cloudinary.v2.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// إنشاء Storage
+// إنشاء Storage — pass the full module so the library can reach `.v2.uploader`
 const storage = CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
