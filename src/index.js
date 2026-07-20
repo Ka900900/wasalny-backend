@@ -133,7 +133,7 @@ app.use('/api/auth', authRoutes);
 const authController = require('./controllers/auth.controller');
 app.post('/api/v1/auth/register-fcm-token', authenticateToken, authController.registerFcmToken);
 app.use('/api/v1/user', usersRoutes);
-app.use('/api/v1/driver', captainsRoutes);
+app.use('/api/v1/captain', captainsRoutes);
 app.use('/api/v1/rides', ridesRoutes);
 app.use('/api/v1/wallet', walletRoutes);
 app.use('/api/v1/admin', adminRoutes);
