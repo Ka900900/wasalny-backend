@@ -99,10 +99,11 @@ async function login(req, res, next) {
       } else {
         user = await prisma.user.update({
           where: { id: user.id },
-          data: {
+         data: {
             firstName: user.firstName || firstName,
             lastName: user.lastName || lastName,
             avatarUrl: photoUrl || user.avatarUrl,
+            role: "CAPTAIN", // 👈 تحويل الحساب الحالي تلقائياً لـ CAPTAIN
             isActive: true,
           },
         });
