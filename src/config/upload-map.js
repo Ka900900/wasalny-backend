@@ -11,27 +11,14 @@
  *
  * The value is the Cloudinary sub-folder.
  */
-const DOCUMENT_MAP = {
-  'id-front':   { folder: 'wasalny/documents/id',   prismaField: 'idPhotoFront' },
-  'id-back':    { folder: 'wasalny/documents/id',   prismaField: 'idPhotoBack' },
-  'license':    { folder: 'wasalny/documents/license', prismaField: 'licensePhoto' },
-  'face':       { folder: 'wasalny/documents/face', prismaField: 'facePhoto' },
-  'car':        { folder: 'wasalny/vehicle',         prismaField: 'carPhoto' },
-  'profile':    { folder: 'wasalny/avatars',         prismaField: 'avatar' },
-  'insurance':  { folder: 'wasalny/documents/insurance', prismaField: 'insurancePhoto' },
+module.exports = {
+  idPhotoFront: { prismaField: 'idPhotoFront', folder: 'wasalny/documents' },
+  idPhotoBack: { prismaField: 'idPhotoBack', folder: 'wasalny/documents' },
+  licensePhoto: { prismaField: 'licensePhoto', folder: 'wasalny/documents' },
+  facePhoto: { prismaField: 'facePhoto', folder: 'wasalny/faces' },
+  insurancePhoto: { prismaField: 'insurancePhoto', folder: 'wasalny/documents' },
+  
+  // تزويد المسارات المترادفة لتفادي خطأ 500
+  profile: { prismaField: 'facePhoto', folder: 'wasalny/profiles' },
+  avatar: { prismaField: 'facePhoto', folder: 'wasalny/profiles' }
 };
-
-/**
- * Upper-camel-case helper for Prisma field display.
- */
-const FIELD_LABELS = {
-  idPhotoFront: 'National ID (Front)',
-  idPhotoBack:  'National ID (Back)',
-  licensePhoto: 'Driver License',
-  facePhoto:    'Face / Selfie',
-  carPhoto:     'Vehicle Photo',
-  avatar:       'Profile Photo',
-  insurancePhoto: 'Insurance Document',
-};
-
-module.exports = { DOCUMENT_MAP, FIELD_LABELS };
