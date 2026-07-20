@@ -5,7 +5,7 @@
  * Uploads are streamed directly to Cloudinary via `upload_stream` with
  * automatic format & quality optimisation.
  */
-const cloudinary = require('cloudinary').v2;
+const cloudinary = require('../config/cloudinary');
 const { Readable } = require('stream');
 
 // ─── Allowed MIME types ────────────────────────────────────
