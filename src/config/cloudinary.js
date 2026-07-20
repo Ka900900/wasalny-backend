@@ -6,8 +6,7 @@
  *   CLOUDINARY_API_SECRET
  */
 const cloudinary = require('cloudinary').v2;
-
-const cloudinary = require('cloudinary').v2;
+ 
 
 cloudinary.config({
   cloud_name: 'dax17bn0m',
