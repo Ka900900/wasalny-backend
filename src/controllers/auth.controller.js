@@ -13,7 +13,9 @@ async function login(req, res, next) {
     // 1️⃣ الحالة الأولى: تسجيل دخول عادي ببريد وباسورد
     if (email && password) {
       const cleanEmail = email.toLowerCase().trim();
-      const user = await prisma.user.findUnique({ where: { email: cleanEmail } });
+      
+      // 💡 استخدمنا findFirst هنا بدلاً من findUnique لتفادي خطأ بريزما
+      const user = await prisma.user.findFirst({ where: { email: cleanEmail } });
 
       if (!user || !user.password) {
         return res.status(400).json({
@@ -79,10 +81,10 @@ async function login(req, res, next) {
       const firstName = nameParts[0] || "Captain";
       const lastName = nameParts.slice(1).join(" ") || "";
 
-      let user = await prisma.user.findUnique({ where: { email: cleanEmail } });
+      // 💡 البحث باستخدام findFirst
+      let user = await prisma.user.findFirst({ where: { email: cleanEmail } });
 
       if (!user) {
-        // إنشاء كلمة مرور افتراضية مشفرة ورقم هاتف افتراضي لتفادي قيود Prisma
         const dummyPassword = await bcrypt.hash("GoogleAuth#2026", 10);
         const dummyPhone = phone || `010${Math.floor(10000000 + Math.random() * 90000000)}`;
 
@@ -100,9 +102,9 @@ async function login(req, res, next) {
           },
         });
       } else {
-        // تحديث البيانات الحالية
+        // 💡 التحديث بواسطة id بدلاً من email
         user = await prisma.user.update({
-          where: { email: cleanEmail },
+          where: { id: user.id },
           data: {
             firstName: user.firstName || firstName,
             lastName: user.lastName || lastName,
@@ -143,7 +145,6 @@ async function login(req, res, next) {
 
   } catch (error) {
     console.error("❌ Login Error Details:", error);
-    // إرجاع تفاصيل الخطأ مباشرة للعميل لتسهيل التتبع في Thunder Client
     return res.status(500).json({
       success: false,
       message: "خطأ في تنفيذ الطلب على قاعدة البيانات",
