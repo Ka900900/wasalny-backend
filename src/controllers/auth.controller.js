@@ -92,7 +92,7 @@ async function login(req, res, next) {
             lastName,
             phoneNumber: userPhone,
             avatarUrl: photoUrl || null,
-            role: "CAPTAIN",
+            role: "CAPTAIN", // 👈 للإنشاء الجديد
             isActive: true,
           },
         });
