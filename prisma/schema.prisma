@@ -90,6 +90,14 @@ model DriverProfile {
   vehicleType    VehicleType
   serviceTier    ServiceTier?
   carPhotoUrl    String
+
+  // ── Identity verification documents ──
+  idPhotoFront   String?         // البطاقة الشخصية – وجه
+  idPhotoBack    String?         // البطاقة الشخصية – ظهر
+  licensePhoto   String?         // رخصة القيادة
+  facePhoto      String?         // صورة شخصية (selfie) للتحقق من الهوية
+  insurancePhoto String?         // وثيقة التأمين
+
   isAvailable    Boolean         @default(true)
   currentLat     Float?
   currentLng     Float?
