@@ -8,28 +8,29 @@ const jwt = require("jsonwebtoken");
 // 🔑 دالة تسجيل الدخول الشاملة
 async function login(req, res, next) {
   try {
-    const { email, password, idToken, displayName, photoUrl, phone } = req.body;
+    const { email, password, idToken, displayName, photoUrl, phone, phoneNumber } = req.body;
 
     // 1️⃣ الحالة الأولى: تسجيل دخول عادي ببريد وباسورد
     if (email && password) {
       const cleanEmail = email.toLowerCase().trim();
       
-      // 💡 استخدمنا findFirst هنا بدلاً من findUnique لتفادي خطأ بريزما
       const user = await prisma.user.findFirst({ where: { email: cleanEmail } });
 
-      if (!user || !user.password) {
+      if (!user) {
         return res.status(400).json({
           success: false,
           message: "البريد الإلكتروني أو كلمة المرور غير صحيحة",
         });
       }
 
-      const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) {
-        return res.status(400).json({
-          success: false,
-          message: "البريد الإلكتروني أو كلمة المرور غير صحيحة",
-        });
+      if (user.password) {
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+          return res.status(400).json({
+            success: false,
+            message: "البريد الإلكتروني أو كلمة المرور غير صحيحة",
+          });
+        }
       }
 
       const token = jwt.sign(
@@ -47,10 +48,9 @@ async function login(req, res, next) {
           email: user.email,
           firstName: user.firstName,
           lastName: user.lastName,
-          phone: user.phone,
+          phoneNumber: user.phoneNumber,
           role: user.role,
-          facePhoto: user.facePhoto,
-          isVerified: user.isVerified,
+          avatarUrl: user.avatarUrl,
           isActive: user.isActive,
         },
       });
@@ -78,38 +78,32 @@ async function login(req, res, next) {
       }
 
       const nameParts = (displayName || "").trim().split(" ");
-      const firstName = nameParts[0] || "Captain";
+      const firstName = nameParts[0] || "كابتن";
       const lastName = nameParts.slice(1).join(" ") || "";
+      const userPhone = phoneNumber || phone || `010${Math.floor(10000000 + Math.random() * 90000000)}`;
 
-      // 💡 البحث باستخدام findFirst
       let user = await prisma.user.findFirst({ where: { email: cleanEmail } });
 
       if (!user) {
-        const dummyPassword = await bcrypt.hash("GoogleAuth#2026", 10);
-        const dummyPhone = phone || `010${Math.floor(10000000 + Math.random() * 90000000)}`;
-
         user = await prisma.user.create({
           data: {
             email: cleanEmail,
-            password: dummyPassword,
             firstName,
             lastName,
-            phone: dummyPhone,
-            facePhoto: photoUrl || null,
+            phoneNumber: userPhone,
+            avatarUrl: photoUrl || null,
             role: "CAPTAIN",
-            isVerified: true,
             isActive: true,
           },
         });
       } else {
-        // 💡 التحديث بواسطة id بدلاً من email
         user = await prisma.user.update({
           where: { id: user.id },
           data: {
             firstName: user.firstName || firstName,
             lastName: user.lastName || lastName,
-            facePhoto: user.facePhoto || photoUrl,
-            isVerified: true,
+            avatarUrl: photoUrl || user.avatarUrl,
+            isActive: true,
           },
         });
       }
@@ -129,10 +123,9 @@ async function login(req, res, next) {
           email: user.email,
           firstName: user.firstName,
           lastName: user.lastName,
-          phone: user.phone,
+          phoneNumber: user.phoneNumber,
           role: user.role,
-          facePhoto: user.facePhoto,
-          isVerified: user.isVerified,
+          avatarUrl: user.avatarUrl,
           isActive: user.isActive,
         },
       });
