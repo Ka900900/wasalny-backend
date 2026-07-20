@@ -5,12 +5,12 @@ const prisma = new PrismaClient();
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
-// 🔑 دالة تسجيل الدخول المرنة (عادي / Google idToken / Google Fallback)
+// 🔑 دالة تسجيل الدخول الشاملة
 async function login(req, res, next) {
   try {
-    const { email, password, idToken, displayName, photoUrl } = req.body;
+    const { email, password, idToken, displayName, photoUrl, phone } = req.body;
 
-    // 1️⃣ الحالة الأولى: تسجيل دخول عادي (بريد إلكتروني + كلمة مرور)
+    // 1️⃣ الحالة الأولى: تسجيل دخول عادي ببريد وباسورد
     if (email && password) {
       const cleanEmail = email.toLowerCase().trim();
       const user = await prisma.user.findUnique({ where: { email: cleanEmail } });
@@ -45,6 +45,7 @@ async function login(req, res, next) {
           email: user.email,
           firstName: user.firstName,
           lastName: user.lastName,
+          phone: user.phone,
           role: user.role,
           facePhoto: user.facePhoto,
           isVerified: user.isVerified,
@@ -59,11 +60,11 @@ async function login(req, res, next) {
         const result = await authService.login(idToken);
         return res.json(result);
       } catch (serviceErr) {
-        console.warn("⚠️ فشل authService.login، جاري التحويل للمزامنة المباشرة:", serviceErr.message);
+        console.warn("⚠️ فشل authService.login:", serviceErr.message);
       }
     }
 
-    // 3️⃣ الحالة الثالثة: الدخول/المزامنة المباشرة ببيانات جوجل (لتسهيل Thunder Client والموبايل)
+    // 3️⃣ الحالة الثالثة: الدخول/المزامنة ببيانات جوجل مباشرة
     if (email || idToken) {
       const cleanEmail = email ? email.toLowerCase().trim() : null;
 
@@ -81,11 +82,17 @@ async function login(req, res, next) {
       let user = await prisma.user.findUnique({ where: { email: cleanEmail } });
 
       if (!user) {
+        // إنشاء كلمة مرور افتراضية مشفرة ورقم هاتف افتراضي لتفادي قيود Prisma
+        const dummyPassword = await bcrypt.hash("GoogleAuth#2026", 10);
+        const dummyPhone = phone || `010${Math.floor(10000000 + Math.random() * 90000000)}`;
+
         user = await prisma.user.create({
           data: {
             email: cleanEmail,
+            password: dummyPassword,
             firstName,
             lastName,
+            phone: dummyPhone,
             facePhoto: photoUrl || null,
             role: "CAPTAIN",
             isVerified: true,
@@ -93,6 +100,7 @@ async function login(req, res, next) {
           },
         });
       } else {
+        // تحديث البيانات الحالية
         user = await prisma.user.update({
           where: { email: cleanEmail },
           data: {
@@ -119,6 +127,7 @@ async function login(req, res, next) {
           email: user.email,
           firstName: user.firstName,
           lastName: user.lastName,
+          phone: user.phone,
           role: user.role,
           facePhoto: user.facePhoto,
           isVerified: user.isVerified,
@@ -127,14 +136,19 @@ async function login(req, res, next) {
       });
     }
 
-    // 4️⃣ لو لم يتم تقديم أي بيانات صالحة
     return res.status(400).json({
       success: false,
       message: "يرجى تقديم البريد الإلكتروني وكلمة المرور، أو idToken الخاص بجوجل",
     });
 
   } catch (error) {
-    next(error);
+    console.error("❌ Login Error Details:", error);
+    // إرجاع تفاصيل الخطأ مباشرة للعميل لتسهيل التتبع في Thunder Client
+    return res.status(500).json({
+      success: false,
+      message: "خطأ في تنفيذ الطلب على قاعدة البيانات",
+      errorDetails: error.message,
+    });
   }
 }
 
