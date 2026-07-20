@@ -2,6 +2,7 @@ const { updateLocation, getAvailableRides, acceptRide, startRide, completeRide }
 const userRepository = require('../repositories/user.repository');
 const { emitRideStatus, emitDriverLocation, SocketEvents } = require('../config/socket');
 const prisma = require('../config/prisma');
+const { uploadToCloudinary } = require('../services/upload.service'); // تأكد إن المسار صح
 
 async function updateLocationHandler(req, res, io) {
   try {
@@ -270,5 +271,59 @@ async function getDriverRatingsHandler(req, res) {
     });
   }
 }
+// ── Upload Documents ────────────────────────────────
+async function uploadDocuments(req, res) {
+  try {
+    const userId = req.user.userId; 
+    const files = req.files;
 
-module.exports = { updateLocationHandler, getAvailableRidesHandler, toggleAvailabilityHandler, acceptRideHandler, startRideHandler, completeRideHandler, getEarningsHandler, getDriverRatingsHandler };
+    if (!files || Object.keys(files).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'يرجى إرفاق المستندات المطلوبة',
+      });
+    }
+
+    const uploadedUrls = {};
+
+    // رفع الملفات لـ Cloudinary
+    for (const fieldName of Object.keys(files)) {
+      const file = files[fieldName][0];
+      const result = await uploadToCloudinary(file.buffer, `waslny/captains/${userId}`);
+      uploadedUrls[fieldName] = result.secure_url;
+    }
+
+    // تحديث صورة الكابتن في الداتا بيز (وتقدر تضيف أي حقول تانية للبطاقة والرخصة لو موجودة في Prisma)
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(uploadedUrls.avatar && { avatarUrl: uploadedUrls.avatar }),
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'تم رفع المستندات بنجاح',
+      documents: uploadedUrls,
+      user: updatedUser,
+    });
+  } catch (error) {
+    console.error('❌ Error uploading documents:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'حدث خطأ أثناء رفع المستندات',
+      details: error.message || String(error),
+    });
+  }
+}
+module.exports = { 
+  updateLocationHandler, 
+  getAvailableRidesHandler, 
+  toggleAvailabilityHandler, 
+  acceptRideHandler, 
+  startRideHandler, 
+  completeRideHandler, 
+  getEarningsHandler, 
+  getDriverRatingsHandler,
+  uploadDocuments // 👈 ضفنا دالة الرفع هنا
+};
