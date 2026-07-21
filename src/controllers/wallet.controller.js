@@ -368,4 +368,109 @@ async function initiateTopUp(req, res) {
   }
 }
 
-module.exports = { getWalletBalanceHandler, getTransactionsHandler, requestWithdrawalHandler, getWithdrawsHandler, topUpWalletHandler, initiatePaymentHandler, kashierCheckoutPageHandler, kashierCallbackHandler, initiateTopUp };
+/**
+ * POST /api/v1/wallet/topup/confirm
+ * يؤكد عملية الدفع مع Kashier ويشحن محفظة المستخدم.
+ */
+async function confirmTopUp(req, res) {
+  try {
+    const { orderId, sessionId } = req.body || req.query || {};
+
+    if (!orderId) {
+      return res.status(400).json({ error: 'معرّف الطلب (orderId) مطلوب' });
+    }
+
+    // الاستعلام عن حالة الدفع من Kashier (server-side)
+    const paymentStatus = await queryKashierTransaction(orderId);
+
+    // البحث عن سجل PaymentSession
+    const paymentSession = await prisma.paymentSession.findUnique({
+      where: { orderId },
+    });
+
+    if (!paymentSession) {
+      return res.status(404).json({ error: 'لم يتم العثور على جلسة الدفع' });
+    }
+
+    // منع الشحن المزدوج
+    if (paymentSession.status === 'SUCCESS' || paymentSession.status === 'COMPLETED') {
+      return res.status(400).json({ error: 'تمت معالجة هذه العملية مسبقاً' });
+    }
+
+    if (paymentStatus.paid) {
+      // نجاح الدفع
+      const amount = Number(paymentSession.amount || paymentStatus.amount || 0);
+      if (amount <= 0) {
+        return res.status(400).json({ error: 'المبلغ غير صالح' });
+      }
+
+      // تحديث سجل PaymentSession
+      await prisma.paymentSession.update({
+        where: { orderId },
+        data: {
+          status: 'SUCCESS',
+          paymentReference: paymentStatus.sessionId || null,
+          confirmedAt: new Date(),
+        },
+      });
+
+      // المستخدم مسجل الدخول بواسطة authenticateToken
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'المستخدم غير مصرح' });
+      }
+
+      // البحث عن المحفظة أو إنشائها — عملية ذرية
+      const wallet = await prisma.wallet.upsert({
+        where: { userId },
+        update: { balance: { increment: amount } },
+        create: { userId, balance: amount },
+      });
+
+      // تسجيل معاملة الشحن
+      await prisma.walletTransaction.create({
+        data: {
+          walletId: wallet.id,
+          type: 'TOPUP',
+          amount,
+          balanceAfter: wallet.balance,
+          status: 'COMPLETED',
+          description: 'شحن محفظة عبر Kashier',
+          metadata: {
+            orderId,
+            sessionId: paymentSession.sessionId,
+            paymentReference: paymentStatus.sessionId,
+          },
+        },
+      });
+
+      return res.json({
+        success: true,
+        message: 'تم شحن المحفظة بنجاح',
+        balance: Number(wallet.balance),
+        amount,
+      });
+    }
+
+    // فشل الدفع أو لم يكتمل
+    const failureReason = paymentStatus.status
+      ? `حالة الدفع: ${paymentStatus.status}`
+      : 'لم يكتمل الدفع';
+
+    await prisma.paymentSession.update({
+      where: { orderId },
+      data: { status: 'FAILED', failureReason },
+    });
+
+    return res.status(402).json({
+      success: false,
+      error: 'لم يكتمل الدفع',
+      failureReason,
+    });
+  } catch (error) {
+    console.error('Confirm topup error:', error);
+    res.status(500).json({ error: error.message || 'حدث خطأ أثناء تأكيد الدفع' });
+  }
+}
+
+module.exports = { getWalletBalanceHandler, getTransactionsHandler, requestWithdrawalHandler, getWithdrawsHandler, topUpWalletHandler, initiatePaymentHandler, kashierCheckoutPageHandler, kashierCallbackHandler, initiateTopUp, confirmTopUp };
