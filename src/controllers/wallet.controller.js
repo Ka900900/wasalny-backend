@@ -306,4 +306,66 @@ async function kashierCallbackHandler(req, res) {
   }
 }
 
-module.exports = { getWalletBalanceHandler, getTransactionsHandler, requestWithdrawalHandler, getWithdrawsHandler, topUpWalletHandler, initiatePaymentHandler, kashierCheckoutPageHandler, kashierCallbackHandler };
+/**
+ * POST /api/v1/wallet/topup/initiate
+ * ينشئ جلسة دفع جديدة مع Kashier لشحن المحفظة.
+ */
+async function initiateTopUp(req, res) {
+  try {
+    const { amount, paymentMethod } = req.body;
+    const userId = req.user?.userId;
+
+    if (!amount || Number(amount) <= 0) {
+      return res.status(400).json({ error: 'المبلغ يجب أن يكون أكبر من صفر' });
+    }
+    if (!userId) {
+      return res.status(401).json({ error: 'المستخدم غير مصرح' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return res.status(404).json({ error: 'المستخدم غير موجود' });
+    }
+
+    const orderId = `TOPUP_${userId.slice(-6)}_${Date.now()}`;
+
+    const session = await createKashierSession(
+      orderId,
+      amount,
+      'شحن محفظة وصلني',
+      paymentMethod,
+      user
+    );
+
+    // إنشاء/تحديث سجل PaymentSession
+    await prisma.paymentSession.upsert({
+      where: { orderId },
+      update: {
+        sessionId: session.sessionId,
+        status: 'CREATED',
+        paymentMethod: paymentMethod || null,
+        amount: Number(amount),
+      },
+      create: {
+        orderId,
+        sessionId: session.sessionId,
+        status: 'CREATED',
+        paymentMethod: paymentMethod || null,
+        amount: Number(amount),
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'تم إنشاء جلسة الدفع بنجاح',
+      orderId,
+      paymentUrl: session.paymentUrl,
+      sessionId: session.sessionId,
+    });
+  } catch (error) {
+    console.error('Initiate topup error:', error);
+    res.status(500).json({ error: error.message || 'حدث خطأ أثناء إنشاء جلسة الدفع' });
+  }
+}
+
+module.exports = { getWalletBalanceHandler, getTransactionsHandler, requestWithdrawalHandler, getWithdrawsHandler, topUpWalletHandler, initiatePaymentHandler, kashierCheckoutPageHandler, kashierCallbackHandler, initiateTopUp };
