@@ -4,9 +4,10 @@ const { haversineDistance } = require('../services/geo');
 const { getCommissionRate, settleRide, syncRideStatusToFirestore, createChatRoom } = require('./ride.service');
 
 async function updateLocation(userId, lat, lng) {
-  return prisma.driverProfile.update({
+  return prisma.driverProfile.upsert({
     where: { userId },
-    data: { currentLat: lat, currentLng: lng },
+    update: { currentLat: lat, currentLng: lng },
+    create: { userId, currentLat: lat, currentLng: lng },
   });
 }
 

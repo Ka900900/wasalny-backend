@@ -45,9 +45,10 @@ async function findCaptainsWithTokens() {
 async function setDriverAvailability(userId, isAvailable) {
   // تحديث حالة توفّر الكابتن (متصل/غير متصل) في ملفه.
   // يُستخدم عند الفصل المفاجئ للسوكيت (App Kill / انقطاع الإنترنت).
-  return prisma.driverProfile.update({
+  return prisma.driverProfile.upsert({
     where: { userId },
-    data: { isAvailable: !!isAvailable },
+    update: { isAvailable: !!isAvailable },
+    create: { userId, isAvailable: !!isAvailable },
   });
 }
 
