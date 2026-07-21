@@ -1,6 +1,6 @@
 const prisma = require('../config/prisma');
 const { getFirestore } = require('../config/firebase');
-const { calculateDistance, estimateDuration, calculateFare, haversineDistance } = require('./geo');
+const { calculateDistance, estimateDuration, calculateFare, haversineDistance, getPricePerKm } = require('./geo');
 const { emitRideStatus, SocketEvents } = require('../config/socket');
 const { Prisma } = require('@prisma/client');
 const { notifyCaptainsNewRide } = require('./fcm.service');
@@ -46,14 +46,12 @@ async function calculateRideFare({ originLat, originLng, destLat, destLng, rideT
   const durationMin = estimateDuration(distanceKm, 25);
 
   let multiplier = 1.0;
+  let rideOption = null;
   if (rideType) {
-    const option = await prisma.rideOption.findUnique({ where: { id: rideType } });
-    if (!option) {
-      const opt = await prisma.rideOption.findFirst({ where: { name: rideType, isActive: true } });
-      if (opt) multiplier = opt.multiplier;
-    } else {
-      multiplier = option.multiplier;
-    }
+    rideOption = await prisma.rideOption.findFirst({
+      where: { OR: [{ id: rideType }, { name: rideType }], isActive: true },
+    });
+    if (rideOption) multiplier = parseFloat(rideOption.multiplier.toString());
   }
 
   const commissionRate = await getCommissionRate();
@@ -71,14 +69,14 @@ async function calculateRideFare({ originLat, originLng, destLat, destLng, rideT
   return {
     distance: parseFloat(distanceKm.toFixed(2)),
     durationMinutes: durationMin,
-    pricePerKm: baseFare.pricePerKm,
+    pricePerKm: base.pricePerKm,
     multiplier,
-    basePrice: baseFare.price,
+    basePrice: base.price,
     finalPrice,
     commissionRate,
     commission,
     driverEarning: parseFloat((finalPrice - commission).toFixed(2)),
-    isPeakHour: require('./geo').getPricePerKm() > 7,
+    isPeakHour: getPricePerKm() > 7,
   };
 }
 
