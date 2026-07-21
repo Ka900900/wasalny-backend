@@ -100,6 +100,20 @@ const generalLimiter = rateLimit({
 app.use(cors());
 app.use(generalLimiter);
 
+// التقاط Raw Body لمسار Webhook كاشير قبل أن يستهلكه express.json()
+// لأن webhook يحتاج الجسم الخام للتحقق من التوقيع (HMAC-SHA256)
+// نستخدم express.raw() كـ middleware مخصص لهذا المسار ثم نخزنه في req.rawBody
+app.use('/api/webhooks/kashier', express.raw({ type: '*/*' }), (req, res, next) => {
+  if (Buffer.isBuffer(req.body)) {
+    req.rawBody = req.body.toString('utf8');
+  } else if (typeof req.body === 'string') {
+    req.rawBody = req.body;
+  } else {
+    req.rawBody = JSON.stringify(req.body);
+  }
+  next();
+});
+
 // جعل express.json() شرطياً حتى لا يتعارض مع Multer في رفع الملفات
 const jsonParser = express.json();
 app.use((req, res, next) => {
@@ -1443,11 +1457,18 @@ app.get('/api/v1/user/ratings/:userId', authenticateToken, async (req, res) => {
  *       200:
  *         description: Webhook processed
  */
-app.post('/api/webhooks/kashier', express.raw({ type: 'application/json' }), async (req, res) => {
+app.post('/api/webhooks/kashier', async (req, res) => {
   try {
     const signature = req.headers['x-kashier-signature'];
     if (!signature) return res.status(400).send('Missing signature');
-    const payload = req.body.toString();
+
+    // استخدام rawBody الملتقط قبل express.json() لتجنب [object Object]
+    const payload = req.rawBody;
+
+    if (!payload) {
+      console.error('[Webhook] ❌ No raw body captured');
+      return res.status(400).send('Missing body');
+    }
 
     console.log('[Webhook] Received payload (signature redacted)');
 
@@ -1462,18 +1483,26 @@ app.post('/api/webhooks/kashier', express.raw({ type: 'application/json' }), asy
     if (event.status !== 'PAID') return res.status(200).send('OK');
 
     // كاشير v3 بيرجّع sessionId (_id) في الـ webhook — نربطه بـ orderId عبر جدول paymentSession
-    let orderId = event.orderId;
+    let orderId = event.orderId || event.order;
     if (!orderId && (event.sessionId || event._id)) {
       const stored = await prisma.paymentSession.findFirst({
         where: { sessionId: event.sessionId || event._id },
       });
       if (stored) orderId = stored.orderId;
     }
-    if (!orderId) return res.status(200).send('OK');
+    if (!orderId) {
+      console.log('[Webhook] ⏭️ No orderId found in event or session lookup');
+      return res.status(200).send('OK');
+    }
 
-    // شحن محفظة: orderId = topup_${userId}_${timestamp}
-    if (orderId.startsWith('topup_')) {
-      const userId = orderId.split('_')[1];
+    // شحن محفظة: orderId = topup_{userId}_{timestamp} (غير حساس لحالة الأحرف)
+    if (orderId.toLowerCase().startsWith('topup_')) {
+      // استخراج userId بشكل آمن: كل النص بين أول underscore وآخر underscore
+      const firstUnderscore = orderId.indexOf('_');
+      const lastUnderscore = orderId.lastIndexOf('_');
+      const userId = firstUnderscore !== -1 && lastUnderscore > firstUnderscore
+        ? orderId.slice(firstUnderscore + 1, lastUnderscore)
+        : orderId.split('_')[1];
       const amount = parseFloat(event.amount);
       if (!userId || !amount || amount <= 0) return res.status(200).send('OK');
 
@@ -1515,6 +1544,9 @@ app.post('/api/webhooks/kashier', express.raw({ type: 'application/json' }), asy
       console.log(`[Webhook] ✅ Wallet topped up: user=${userId} amount=${amount} newBalance=${result.wallet.balance}`);
       return res.status(200).send('OK');
     }
+
+    // إذا وصلنا إلى هنا فـ orderId ليس topup — نسجّل تحذيراً
+    console.log(`[Webhook] ⚠️ orderId does not match topup pattern: "${orderId}" (event.status=${event.status})`);
 
     // دفع رحلة: orderId = rideId
     const ride = await prisma.rideRequest.findUnique({

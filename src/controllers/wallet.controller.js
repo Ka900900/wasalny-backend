@@ -225,11 +225,16 @@ async function kashierCallbackHandler(req, res) {
     }
 
     // استنتاج userId من بادئة orderId (TOPUP_ أو topup_ يتبعه userId)
-    let resolvedUserId = userId;
+    let resolvedUserId = typeof userId === 'string' ? userId : null;
     if (!resolvedUserId && typeof resolvedOrderId === 'string') {
       const upper = resolvedOrderId.toUpperCase();
       if (upper.startsWith('TOPUP_')) {
-        resolvedUserId = resolvedOrderId.split('_')[1];
+        // استخراج آمن: كل النص بين أول underscore وآخر underscore
+        const firstUnderscore = resolvedOrderId.indexOf('_');
+        const lastUnderscore = resolvedOrderId.lastIndexOf('_');
+        resolvedUserId = firstUnderscore !== -1 && lastUnderscore > firstUnderscore
+          ? resolvedOrderId.slice(firstUnderscore + 1, lastUnderscore)
+          : resolvedOrderId.split('_')[1];
       }
     }
 
@@ -331,7 +336,7 @@ async function initiateTopUp(req, res) {
       return res.status(404).json({ error: 'المستخدم غير موجود' });
     }
 
-    const orderId = `TOPUP_${userId.slice(-6)}_${Date.now()}`;
+    const orderId = `TOPUP_${userId}_${Date.now()}`;
 
     // إنشاء جلسة دفع Kashier — تُعيد رابط الصفحة المستضافة (sessionUrl)
     const session = await createKashierSession(
