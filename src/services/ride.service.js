@@ -6,19 +6,62 @@ const { Prisma } = require('@prisma/client');
 const { notifyCaptainsNewRide } = require('./fcm.service');
 const userRepository = require('../repositories/user.repository');
 
-// ── نسبة العمولة من Config (قابلة للتعديل من غير كود، افتراضي 8%) ──
-let _commissionRateCache = null;
-let _commissionRateCacheAt = 0;
-async function getCommissionRate() {
+// ── نظام العمولة مع دعم عرض الكباتن الأوائل (قابل للتعديل من Config) ──
+let _configCache = null;
+let _configCacheAt = 0;
+
+async function _getConfig(key, defaultValue) {
   const now = Date.now();
-  if (_commissionRateCache !== null && now - _commissionRateCacheAt < 5 * 60 * 1000) {
-    return _commissionRateCache;
+  if (_configCache === null || now - _configCacheAt > 5 * 60 * 1000) {
+    const keys = ['COMMISSION_RATE', 'PROMO_COMMISSION_RATE', 'PROMO_CAPTAINS_LIMIT', 'PROMO_MAX_RIDES', 'PROMO_DAYS_LIMIT'];
+    const rows = await prisma.config.findMany({
+      where: { key: { in: keys } },
+    });
+    _configCache = {};
+    for (const row of rows) {
+      _configCache[row.key] = row.valueType === 'NUMBER' ? parseFloat(row.value) : row.value;
+    }
+    _configCacheAt = now;
   }
-  const cfg = await prisma.config.findUnique({ where: { key: 'COMMISSION_RATE' } });
-  const rate = cfg ? parseFloat(cfg.value) : 0.08;
-  _commissionRateCache = rate;
-  _commissionRateCacheAt = now;
-  return rate;
+  return _configCache[key] !== undefined ? _configCache[key] : defaultValue;
+}
+
+async function getCommissionRate(driverId) {
+  const baseRate = await _getConfig('COMMISSION_RATE', 0.10);
+
+  // بدون driverId (مثلاً عند حساب السعر قبل التعيين) → العمولة الأساسية
+  if (!driverId) return baseRate;
+
+  const promoRate = await _getConfig('PROMO_COMMISSION_RATE', 0.05);
+  const captainsLimit = await _getConfig('PROMO_CAPTAINS_LIMIT', 100);
+  const maxRides = await _getConfig('PROMO_MAX_RIDES', 50);
+  const daysLimit = await _getConfig('PROMO_DAYS_LIMIT', 30);
+
+  // التحقق من أن driverId هو كابتن فعلاً
+  const captain = await prisma.user.findUnique({
+    where: { id: driverId },
+    select: { createdAt: true, role: true },
+  });
+  if (!captain || captain.role !== 'CAPTAIN') return baseRate;
+
+  // الشرط 1: عدد الكباتن الذين سجلوا قبل هذا الكابتن < الحد المسموح
+  const earlierCount = await prisma.user.count({
+    where: { role: 'CAPTAIN', createdAt: { lt: captain.createdAt } },
+  });
+  if (earlierCount >= captainsLimit) return baseRate;
+
+  // الشرط 2: عدد الرحلات المكتملة لهذا الكابتن < الحد المسموح
+  const completedRides = await prisma.rideRequest.count({
+    where: { driverId, status: 'COMPLETED' },
+  });
+  if (completedRides >= maxRides) return baseRate;
+
+  // الشرط 3: لم يمضِ على تسجيله أكثر من daysLimit يوماً
+  const daysSince = (Date.now() - captain.createdAt.getTime()) / (1000 * 60 * 60 * 24);
+  if (daysSince >= daysLimit) return baseRate;
+
+  // جميع الشروط مستوفاة → العمولة التشجيعية
+  return promoRate;
 }
 
 async function getRideOptions() {
@@ -294,7 +337,7 @@ async function _settleRideCore(tx, { rideId, driverId }) {
   if (ride.status === 'COMPLETED' && ride.isPaid) throw new Error('تم تسوية هذه الرحلة مسبقاً');
   if (ride.status !== 'STARTED' && ride.status !== 'COMPLETED') throw new Error('لا يمكن تسوية رحلة في هذه الحالة');
 
-  const rate = await getCommissionRate();
+  const rate = await getCommissionRate(driverId);
   const price = new Prisma.Decimal(ride.price);
   const commission = price.mul(rate).toDecimalPlaces(2);
   const net = price.minus(commission);
