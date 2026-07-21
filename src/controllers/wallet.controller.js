@@ -1,5 +1,5 @@
 const { getWalletBalance, getTransactions, requestWithdrawal, getWithdraws, topUpWallet } = require('../services/wallet.service');
-const { createKashierSession, queryKashierTransaction } = require('../services/kashier');
+const { createKashierSession, queryKashierTransaction, payWithWalletDirect, payWithCardDirect } = require('../services/kashier');
 const prisma = require('../config/prisma');
 
 async function getWalletBalanceHandler(req, res) {
@@ -312,7 +312,7 @@ async function kashierCallbackHandler(req, res) {
  */
 async function initiateTopUp(req, res) {
   try {
-    const { amount, paymentMethod } = req.body;
+    const { amount, paymentMethod, walletPhoneNumber } = req.body;
     const userId = req.user?.userId;
 
     if (!amount || Number(amount) <= 0) {
@@ -329,39 +329,114 @@ async function initiateTopUp(req, res) {
 
     const orderId = `TOPUP_${userId.slice(-6)}_${Date.now()}`;
 
-    const session = await createKashierSession(
-      orderId,
-      amount,
-      'شحن محفظة وصلني',
-      paymentMethod,
-      user
-    );
+    const method = (paymentMethod || 'card').toLowerCase();
 
-    // إنشاء/تحديث سجل PaymentSession
-    await prisma.paymentSession.upsert({
-      where: { orderId },
-      update: {
-        sessionId: session.sessionId,
-        status: 'CREATED',
-        paymentMethod: paymentMethod || null,
-        amount: Number(amount),
-      },
-      create: {
+    // ── الدفع المباشر بالمحفظة (Vodafone Cash / InstaPay) ──
+    if (method === 'wallet' || method === 'vodafone_cash' || method === 'instapay') {
+      if (!walletPhoneNumber) {
+        return res.status(400).json({ error: 'رقم هاتف المحفظة مطلوب للدفع بالمحفظة' });
+      }
+
+      const cleanPhone = walletPhoneNumber.replace(/[^0-9]/g, '');
+      if (!/^01[0-9]{9}$/.test(cleanPhone)) {
+        return res.status(400).json({ error: 'رقم الهاتف غير صالح، يجب أن يكون رقماً مصرياً صحيحاً (11 رقمًا)' });
+      }
+
+      const walletType = method === 'instapay' ? 'instapay' : 'vodafone_cash';
+
+      const result = await payWithWalletDirect({
         orderId,
-        sessionId: session.sessionId,
-        status: 'CREATED',
-        paymentMethod: paymentMethod || null,
-        amount: Number(amount),
-      },
-    });
+        amount,
+        walletPhoneNumber: cleanPhone,
+        walletType,
+      });
 
-    res.status(201).json({
-      success: true,
-      message: 'تم إنشاء جلسة الدفع بنجاح',
-      orderId,
-      paymentUrl: session.paymentUrl,
-      sessionId: session.sessionId,
-    });
+      return res.status(201).json({
+        success: true,
+        message: result.message || 'تم إرسال طلب الدفع، يرجى تأكيد الـ OTP من هاتفك',
+        orderId,
+        sessionId: result.sessionId,
+        referenceNumber: result.referenceNumber,
+        otpRequired: result.otpRequired,
+        amount: result.amount,
+        status: result.status,
+      });
+    }
+
+    // ── الدفع المباشر بالبطاقة (Customized Card Form) ──
+    if (method === 'card_direct') {
+      const { cardToken, cardData } = req.body;
+
+      if (!cardToken && !cardData) {
+        return res.status(400).json({ error: 'يجب توفير توكن البطاقة (cardToken) أو بيانات البطاقة (cardData)' });
+      }
+
+      const result = await payWithCardDirect({
+        orderId,
+        amount,
+        cardToken,
+        cardData,
+        customer: user,
+        description: 'شحن محفظة وصلني (بطاقة مباشرة)',
+      });
+
+      const response = {
+        success: result.success,
+        message: result.message,
+        orderId,
+        sessionId: result.sessionId,
+        transactionId: result.transactionId,
+        status: result.status,
+        amount: result.amount,
+      };
+
+      // إذا تطلب الأمر 3D Secure، نرسل الرابط لفتحه في WebView
+      if (result['3dsUrl']) {
+        response['3dsUrl'] = result['3dsUrl'];
+      }
+
+      return res.status(201).json(response);
+    }
+
+    // ── الدفع ببطاقة (جلسة Kashier عادية — WebView) ──
+    if (method === 'card') {
+      const session = await createKashierSession(
+        orderId,
+        amount,
+        'شحن محفظة وصلني',
+        paymentMethod,
+        user
+      );
+
+      // إنشاء/تحديث سجل PaymentSession
+      await prisma.paymentSession.upsert({
+        where: { orderId },
+        update: {
+          sessionId: session.sessionId,
+          status: 'CREATED',
+          paymentMethod: paymentMethod || null,
+          amount: Number(amount),
+        },
+        create: {
+          orderId,
+          sessionId: session.sessionId,
+          status: 'CREATED',
+          paymentMethod: paymentMethod || null,
+          amount: Number(amount),
+        },
+      });
+
+      return res.status(201).json({
+        success: true,
+        message: 'تم إنشاء جلسة الدفع بنجاح',
+        orderId,
+        paymentUrl: session.paymentUrl,
+        sessionId: session.sessionId,
+      });
+    }
+
+    // طريقة دفع غير مدعومة
+    return res.status(400).json({ error: `طريقة الدفع '${paymentMethod}' غير مدعومة` });
   } catch (error) {
     console.error('Initiate topup error:', error);
     res.status(500).json({ error: error.message || 'حدث خطأ أثناء إنشاء جلسة الدفع' });

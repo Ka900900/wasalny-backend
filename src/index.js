@@ -25,6 +25,7 @@ const walletRoutes = require('./routes/wallet.routes');
 const adminRoutes = require('./routes/admin.routes');
 const supportRoutes = require('./routes/support.routes');
 const safetyRoutes = require('./routes/safety.routes');
+const notificationsRoutes = require('./routes/notifications.routes');
 const { rateRideHandler } = require('./controllers/ride.controller');
 
 // Validators
@@ -139,6 +140,7 @@ app.use('/api/v1/wallet', walletRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/support', supportRoutes);
 app.use('/api/v1/safety', safetyRoutes);
+app.use('/api/v1/notifications', notificationsRoutes);
 app.use('/api/v1/upload', uploadRoutes);
 
 // ── Helper: Ensure Wallet exists ─────────────────────

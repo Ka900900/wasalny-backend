@@ -58,7 +58,8 @@ model User {
   otpCode      String?
   otpExpiresAt DateTime?
   avatarUrl    String?
-  fcmToken     String?  @map("fcm_token") // Firebase Cloud Messaging token for push notifications
+  fcmToken     String?   @map("fcm_token") // Firebase Cloud Messaging token for push notifications
+  notificationPreferences Boolean? @default(true) @map("notification_preferences") // استقبال العروض والإشعارات
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
