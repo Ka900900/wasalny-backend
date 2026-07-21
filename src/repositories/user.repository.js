@@ -43,12 +43,24 @@ async function findCaptainsWithTokens() {
 }
 
 async function setDriverAvailability(userId, isAvailable) {
-  // تحديث حالة توفّر الكابتن (متصل/غير متصل) في ملفه.
-  // يُستخدم عند الفصل المفاجئ للسوكيت (App Kill / انقطاع الإنترنت).
+  // البحث عن المركبة لاستخدام بياناتها الحقيقية في حال إنشاء DriverProfile
+  const vehicle = await prisma.vehicle.findFirst({ where: { userId } });
+  if (!vehicle) {
+    throw new Error('برجاء تسجيل بيانات المركبة أولاً قبل تفعيل حالة التوفر');
+  }
+
   return prisma.driverProfile.upsert({
     where: { userId },
     update: { isAvailable: !!isAvailable },
-    create: { userId, isAvailable: !!isAvailable },
+    create: {
+      userId,
+      isAvailable: !!isAvailable,
+      carModel: `${vehicle.make} ${vehicle.model}`,
+      carColor: vehicle.color,
+      carPlateNumber: vehicle.plateNumber,
+      vehicleType: vehicle.vehicleType,
+      carPhotoUrl: vehicle.licenseFrontUrl,
+    },
   });
 }
 

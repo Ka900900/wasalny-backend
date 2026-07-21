@@ -373,6 +373,26 @@ async function addVehicleHandler(req, res) {
       },
     });
 
+    // ── تحديث/إنشاء DriverProfile ببيانات المركبة الحقيقية ──
+    await prisma.driverProfile.upsert({
+      where: { userId },
+      update: {
+        carModel: `${make} ${model}`,
+        carColor: color,
+        carPlateNumber: plateNumber,
+        vehicleType: vehicleType.toUpperCase(),
+        carPhotoUrl: frontResult.secure_url,
+      },
+      create: {
+        userId,
+        carModel: `${make} ${model}`,
+        carColor: color,
+        carPlateNumber: plateNumber,
+        vehicleType: vehicleType.toUpperCase(),
+        carPhotoUrl: frontResult.secure_url,
+      },
+    });
+
     return res.status(200).json({
       success: true,
       message: 'تم إضافة المركبة بنجاح',

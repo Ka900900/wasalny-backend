@@ -4,10 +4,25 @@ const { haversineDistance } = require('../services/geo');
 const { getCommissionRate, settleRide, syncRideStatusToFirestore, createChatRoom } = require('./ride.service');
 
 async function updateLocation(userId, lat, lng) {
+  // البحث عن المركبة لاستخدام بياناتها الحقيقية في حال إنشاء DriverProfile
+  const vehicle = await prisma.vehicle.findFirst({ where: { userId } });
+  if (!vehicle) {
+    throw new Error('برجاء تسجيل بيانات المركبة أولاً قبل تفعيل حالة التوفر');
+  }
+
   return prisma.driverProfile.upsert({
     where: { userId },
     update: { currentLat: lat, currentLng: lng },
-    create: { userId, currentLat: lat, currentLng: lng },
+    create: {
+      userId,
+      currentLat: lat,
+      currentLng: lng,
+      carModel: `${vehicle.make} ${vehicle.model}`,
+      carColor: vehicle.color,
+      carPlateNumber: vehicle.plateNumber,
+      vehicleType: vehicle.vehicleType,
+      carPhotoUrl: vehicle.licenseFrontUrl,
+    },
   });
 }
 
