@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const upload = require('../middlewares/upload.middleware');
+const upload = require('../middlewares/upload.middleware'); // 👈 1. استيراد ميدل وير الرفع
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { updateLocationSchema, toggleAvailabilitySchema } = require('../validators/ride.validator');
@@ -13,8 +13,8 @@ const {
   completeRideHandler, 
   getEarningsHandler, 
   getDriverRatingsHandler,
-  uploadDocuments,
-  addVehicleHandler // 👈 تم إضافة استيراد دالة إضافة بيانات المركبة
+  uploadDocuments, // 👈 2. استيراد دالة رفع المستندات
+  addVehicleHandler // 👈 دالة إضافة المركبة
 } = require('../controllers/captain.controller');
 const { getRideHistoryHandler } = require('../controllers/ride.controller');
 
@@ -29,7 +29,7 @@ const { getRideHistoryHandler } = require('../controllers/ride.controller');
 router.post(
   '/documents',
   authenticateToken,
-  requireRole('CAPTAIN'),
+  requireRole('CAPTAIN'), // 👈 تعديل الـ Role إلى CAPTAIN
   upload.fields([
     { name: 'nationalIdFront', maxCount: 1 },
     { name: 'nationalIdBack', maxCount: 1 },
@@ -39,21 +39,13 @@ router.post(
   uploadDocuments
 );
 
-/**
- * @swagger
- * /api/v1/captain/vehicle:
- *   post:
- *     summary: Add captain vehicle information and upload licenses
- *     tags: [Captain]
- *     security: [{ bearerAuth: [] }]
- */
 router.post(
   '/vehicle',
   authenticateToken,
   requireRole('CAPTAIN'),
   upload.fields([
-    { name: 'licenseFront', maxCount: 1 }, // رفع صورة رخصة العربية وش
-    { name: 'licenseBack', maxCount: 1 },  // رفع صورة رخصة العربية ظهر
+    { name: 'licenseFront', maxCount: 1 },
+    { name: 'licenseBack', maxCount: 1 },
   ]),
   addVehicleHandler
 );

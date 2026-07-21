@@ -273,3 +273,18 @@ model Config {
   description String?
   updatedAt   DateTime @updatedAt
 }
+
+model Vehicle {
+  id              String      @id @default(cuid())
+  userId          String
+  make            String
+  model           String
+  year            Int
+  color           String
+  plateNumber     String      @unique
+  vehicleType     VehicleType
+  licenseFrontUrl String
+  licenseBackUrl  String
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+}

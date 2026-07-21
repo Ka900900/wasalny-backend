@@ -316,6 +316,86 @@ async function uploadDocuments(req, res) {
     });
   }
 }
+// ── Add Vehicle ──────────────────────────────────────
+async function addVehicleHandler(req, res) {
+  try {
+    const userId = req.user.userId;
+
+    // ── Validation ──────────────────────────────────
+    const { make, model, year, color, plateNumber, vehicleType } = req.body;
+
+    if (!make || !model || !year || !color || !plateNumber || !vehicleType) {
+      return res.status(400).json({
+        success: false,
+        message: 'جميع الحقول مطلوبة: make, model, year, color, plateNumber, vehicleType',
+      });
+    }
+
+    const files = req.files;
+    if (!files || !files.licenseFront || !files.licenseBack) {
+      return res.status(400).json({
+        success: false,
+        message: 'يرجى رفع صورتين: licenseFront و licenseBack',
+      });
+    }
+
+    // ── Upload to Cloudinary ────────────────────────
+    const frontFile = files.licenseFront[0];
+    const backFile = files.licenseBack[0];
+
+    const [frontResult, backResult] = await Promise.all([
+      uploadToCloudinary(frontFile.buffer, 'waslny/vehicles'),
+      uploadToCloudinary(backFile.buffer, 'waslny/vehicles'),
+    ]);
+
+    // ── Upsert Vehicle ──────────────────────────────
+    const vehicle = await prisma.vehicle.upsert({
+      where: { plateNumber },
+      update: {
+        make,
+        model,
+        year: parseInt(year, 10),
+        color,
+        vehicleType: vehicleType.toUpperCase(),
+        licenseFrontUrl: frontResult.secure_url,
+        licenseBackUrl: backResult.secure_url,
+      },
+      create: {
+        userId,
+        make,
+        model,
+        year: parseInt(year, 10),
+        color,
+        plateNumber,
+        vehicleType: vehicleType.toUpperCase(),
+        licenseFrontUrl: frontResult.secure_url,
+        licenseBackUrl: backResult.secure_url,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'تم إضافة المركبة بنجاح',
+      vehicle,
+    });
+  } catch (error) {
+    // Handle duplicate plate number
+    if (error.code === 'P2002' && error.meta?.target?.includes('plateNumber')) {
+      return res.status(400).json({
+        success: false,
+        message: 'رقم اللوحة هذا مسجل بالفعل لمركبة أخرى',
+      });
+    }
+
+    console.error('❌ addVehicleHandler error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'حدث خطأ أثناء إضافة المركبة',
+      details: error.message || String(error),
+    });
+  }
+}
+
 module.exports = { 
   updateLocationHandler, 
   getAvailableRidesHandler, 
@@ -325,5 +405,6 @@ module.exports = {
   completeRideHandler, 
   getEarningsHandler, 
   getDriverRatingsHandler,
-  uploadDocuments // 👈 ضفنا دالة الرفع هنا
+  uploadDocuments, // 👈 ضفنا دالة الرفع هنا
+  addVehicleHandler, // 👈 دالة إضافة المركبة
 };
