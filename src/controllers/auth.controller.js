@@ -8,7 +8,7 @@ const jwt = require("jsonwebtoken");
 // 🔑 دالة تسجيل الدخول الشاملة
 async function login(req, res, next) {
   try {
-    const { email, password, idToken, displayName, photoUrl, phone, phoneNumber } = req.body;
+    const { email, password, idToken, displayName, photoUrl, phone, phoneNumber, role } = req.body;
 
     // 1️⃣ الحالة الأولى: تسجيل دخول عادي ببريد وباسورد
     if (email && password) {
@@ -92,7 +92,7 @@ async function login(req, res, next) {
             lastName,
             phoneNumber: userPhone,
             avatarUrl: photoUrl || null,
-            role: "CAPTAIN", // 👈 للإنشاء الجديد
+            role: role || "RIDER", // 👈 الـ role من body أو RIDER افتراضياً
             isActive: true,
           },
         });
@@ -103,7 +103,7 @@ async function login(req, res, next) {
             firstName: user.firstName || firstName,
             lastName: user.lastName || lastName,
             avatarUrl: photoUrl || user.avatarUrl,
-            role: "CAPTAIN", // 👈 تحويل الحساب الحالي تلقائياً لـ CAPTAIN
+            role: role || "RIDER", // 👈 الـ role من body أو RIDER افتراضياً
             isActive: true,
           },
         });
