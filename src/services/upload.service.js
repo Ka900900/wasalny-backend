@@ -64,7 +64,7 @@ function uploadBuffer(buffer, folder = 'wasalny/documents', extra = {}) {
         fetch_format: 'auto',
         quality: 'auto',
         // Security
-        type: 'authenticated',
+        type: 'upload',
         ...extra,
       },
       (err, result) => {
