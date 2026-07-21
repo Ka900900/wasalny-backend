@@ -204,14 +204,54 @@ function generateKashierCheckoutHash(orderId, amount, currency = 'EGP') {
 
 /**
  * Verify a Kashier webhook signature (البيانات الخام + التوقيع من الترويسة).
- * يُستخدم في webhook الخاص بـ index.js — لم يتغيّر في v3.
+ * يُستخدم في webhook الخاص بـ index.js.
+ *
+ * ملاحظة مهمة (Kashier v3):
+ * حسب التوثيق الرسمي، التوقيع يُحسب باستخدام API_KEY (وليس SECRET_KEY).
+ * لذلك نحسب التوقيع بكلا المفتاحين ونسجّل النتائج للتشخيص.
+ *
+ * @param {string} payload   الجسم الخام للطلب (Raw JSON string)
+ * @param {string} signature التوقيع القادم من ترويسة x-kashier-signature
+ * @returns {boolean} true إذا تطابق أحد التوقيعين المحسوبين مع القادم
  */
 function verifyWebhookSignature(payload, signature) {
-  const expectedSignature = crypto
-    .createHmac('sha256', process.env.KASHIER_SECRET_KEY)
+  const apiKey = process.env.KASHIER_API_KEY || '';
+  const secretKey = process.env.KASHIER_SECRET_KEY || '';
+
+  // حساب التوقيع باستخدام API_KEY (الطريقة الصحيحة في v3)
+  const withApiKey = crypto
+    .createHmac('sha256', apiKey)
     .update(payload)
     .digest('hex');
-  return signature === expectedSignature;
+
+  // حساب التوقيع باستخدام SECRET_KEY (قديم / بديل)
+  const withSecretKey = crypto
+    .createHmac('sha256', secretKey)
+    .update(payload)
+    .digest('hex');
+
+  // طباعة تفاصيل التشخيص
+  console.log('========== 🔐 Kashier Webhook Verification ==========');
+  console.log('[Kashier] Incoming signature from header:', signature);
+  console.log('[Kashier] Computed with API_KEY    :', withApiKey);
+  console.log('[Kashier] Computed with SECRET_KEY :', withSecretKey);
+  console.log('[Kashier] Payload (first 200 chars):', payload.slice(0, 200));
+  console.log('[Kashier] API_KEY present         :', !!apiKey);
+  console.log('[Kashier] SECRET_KEY present      :', !!secretKey);
+  console.log('=====================================================');
+
+  // نقارن مع API_KEY أولاً (الأحدث)، ثم SECRET_KEY (احتياطي)
+  if (signature === withApiKey) {
+    console.log('[Kashier] ✅ Signature match using API_KEY');
+    return true;
+  }
+  if (signature === withSecretKey) {
+    console.log('[Kashier] ✅ Signature match using SECRET_KEY');
+    return true;
+  }
+
+  console.log('[Kashier] ❌ Signature does NOT match either key');
+  return false;
 }
 
 /**
