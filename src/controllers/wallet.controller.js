@@ -218,19 +218,22 @@ async function kashierCallbackHandler(req, res) {
     const { userId, status, orderId, merchantOrderId, paymentStatus, sessionId } = req.query;
 
     // كاشير v3 بيرجّع sessionId في الـ redirect — نربطه بـ orderId عبر جدول paymentSession
-    let order = orderId || merchantOrderId;
-    if (!order && sessionId) {
+    let resolvedOrderId = (typeof orderId === 'string' && orderId) || (typeof merchantOrderId === 'string' && merchantOrderId) || null;
+    if (!resolvedOrderId && typeof sessionId === 'string') {
       const stored = await prisma.paymentSession.findFirst({ where: { sessionId } });
-      if (stored) order = stored.orderId;
+      if (stored && typeof stored.orderId === 'string') resolvedOrderId = stored.orderId;
     }
 
-    // استنتاج userId من بادئة orderId (topup_${userId}_${timestamp)
+    // استنتاج userId من بادئة orderId (TOPUP_ أو topup_ يتبعه userId)
     let resolvedUserId = userId;
-    if (!resolvedUserId && order && order.startsWith('topup_')) {
-      resolvedUserId = order.split('_')[1];
+    if (!resolvedUserId && typeof resolvedOrderId === 'string') {
+      const upper = resolvedOrderId.toUpperCase();
+      if (upper.startsWith('TOPUP_')) {
+        resolvedUserId = resolvedOrderId.split('_')[1];
+      }
     }
 
-    if (!resolvedUserId || !order) {
+    if (!resolvedUserId || !resolvedOrderId) {
       return res
         .status(400)
         .setHeader('Content-Type', 'text/html; charset=utf-8')
@@ -240,7 +243,7 @@ async function kashierCallbackHandler(req, res) {
 
     // كاشير v3 بيرجّع sessionId في الـ redirect بدون status واضح —
     // نعتمد على الاستعلام server-side لتأكيد نجاح الدفع بدل الثقة في الـ query.
-    const remote = await queryKashierTransaction(order);
+    const remote = await queryKashierTransaction(resolvedOrderId);
     if (!remote?.paid) {
       return res
         .status(402)
@@ -251,7 +254,7 @@ async function kashierCallbackHandler(req, res) {
 
     // منع الاحتساب المكرر لنفس العملية
     const already = await prisma.walletTransaction.findFirst({
-      where: { type: 'TOPUP', metadata: { path: ['orderId'], equals: order } },
+      where: { type: 'TOPUP', metadata: { path: ['orderId'], equals: resolvedOrderId } },
     });
     if (already) {
       return res
@@ -286,7 +289,7 @@ async function kashierCallbackHandler(req, res) {
           balanceAfter: w.balance,
           description: 'شحن المحفظة عبر كاشير (Checkout)',
           status: 'COMPLETED',
-          metadata: { orderId: order, method: 'kashier-checkout' },
+          metadata: { orderId: resolvedOrderId, method: 'kashier-checkout' },
         },
       });
       return { wallet: w };
