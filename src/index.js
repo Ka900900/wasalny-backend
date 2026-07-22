@@ -786,6 +786,69 @@ app.put('/api/v1/rides/cancel/:rideId', authenticateToken, async (req, res) => {
 
 /**
  * @swagger
+ * /api/v1/trips/{tripId}:
+ *   get:
+ *     summary: Get trip details with privacy-controlled phone numbers
+ *     tags: [Trips]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: tripId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Trip details
+ *       403:
+ *         description: Forbidden — not a participant
+ *       404:
+ *         description: Trip not found
+ */
+app.get('/api/v1/trips/:tripId', authenticateToken, async (req, res) => {
+  const { tripId } = req.params;
+  try {
+    // 1. جلب الرحلة مع بيانات الراكب والكابتن
+    const trip = await prisma.rideRequest.findUnique({
+      where: { id: tripId },
+      include: {
+        rider: {
+          select: { id: true, firstName: true, lastName: true, phoneNumber: true, avatarUrl: true },
+        },
+        driver: {
+          select: { id: true, firstName: true, lastName: true, phoneNumber: true, avatarUrl: true },
+        },
+      },
+    });
+
+    // 2. التحقق من وجود الرحلة
+    if (!trip) {
+      return res.status(404).json({ success: false, error: 'الرحلة غير موجودة' });
+    }
+
+    // 3. التحقق من أن المستخدم طرف في الرحلة
+    if (trip.riderId !== req.user.userId && trip.driverId !== req.user.userId) {
+      return res.status(403).json({ success: false, error: 'ليس لديك صلاحية لعرض تفاصيل هذه الرحلة' });
+    }
+
+    // 4. إخفاء أرقام الهواتف إذا كانت الرحلة في حالة غير نشطة
+    const activeStatuses = ['ACCEPTED', 'ARRIVED', 'IN_PROGRESS', 'STARTED'];
+    const isActive = activeStatuses.includes(trip.status);
+
+    if (!isActive) {
+      if (trip.rider) trip.rider.phoneNumber = null;
+      if (trip.driver) trip.driver.phoneNumber = null;
+    }
+
+    // 5. إرجاع الاستجابة
+    res.json({ success: true, data: { trip } });
+  } catch (error) {
+    console.error('Error fetching trip details:', error);
+    res.status(500).json({ success: false, error: 'خطأ في جلب تفاصيل الرحلة' });
+  }
+});
+
+/**
+ * @swagger
  * /api/v1/trips/{tripId}/messages:
  *   get:
  *     summary: Get chat messages for a trip
