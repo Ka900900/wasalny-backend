@@ -18,7 +18,8 @@ router.get('/payments/kashier/verify', authenticateToken, verifyKashierPaymentHa
 // ── Rating with rideId in URL param ────────────────────
 // POST /api/v1/rides/:rideId/rate
 router.post('/:rideId/rate', authenticateToken, (req, res, next) => {
-  // نسخ rideId من params إلى body لكي يعمل validate
+  // التأكد من أن req.body موجود قبل تعيين rideId (لمنع TypeError)
+  req.body = req.body || {};
   req.body.rideId = req.params.rideId;
   next();
 }, validate(rateRideSchema), rateRideByParamHandler);

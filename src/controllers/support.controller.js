@@ -1,6 +1,233 @@
 const prisma = require('../config/prisma');
 
-// ── User: إرسال رسالة دعم ───────────────────────────
+// ═══════════════════════════════════════════════════════
+//  NEW TICKET-BASED HANDLERS
+// ═══════════════════════════════════════════════════════
+
+// ── GET /api/v1/support/faqs ──────────────────────────
+async function getFAQsHandler(req, res) {
+  try {
+    const faqs = await prisma.fAQ.findMany({
+      where: { isActive: true },
+      orderBy: { order: 'asc' },
+      select: {
+        id: true,
+        question: true,
+        answer: true,
+        category: true,
+        createdAt: true,
+      },
+    });
+    res.json({ success: true, faqs });
+  } catch (error) {
+    console.error('Error fetching FAQs:', error);
+    res.status(500).json({ success: false, error: 'خطأ في جلب الأسئلة الشائعة' });
+  }
+}
+
+// ── POST /api/v1/support/tickets ──────────────────────
+async function createTicketHandler(req, res) {
+  try {
+    const userId = req.user.userId;
+    const { subject, rideId, message } = req.body;
+
+    // التحقق من وجود الرحلة إذا تم تمرير rideId
+    if (rideId) {
+      const ride = await prisma.rideRequest.findUnique({ where: { id: rideId } });
+      if (!ride) {
+        return res.status(400).json({ success: false, error: 'الرحلة غير موجودة' });
+      }
+    }
+
+    // إنشاء التذكرة والرسالة الأولى في معاملة واحدة
+    const ticket = await prisma.$transaction(async (tx) => {
+      const newTicket = await tx.supportTicket.create({
+        data: {
+          userId,
+          rideId: rideId || null,
+          subject,
+          status: 'OPEN',
+        },
+      });
+
+      await tx.supportMessage.create({
+        data: {
+          ticketId: newTicket.id,
+          userId,
+          senderType: 'USER',
+          text: message.trim(),
+        },
+      });
+
+      return newTicket;
+    });
+
+    // إرجاع التذكرة مع رسالة التأكيد
+    const createdTicket = await prisma.supportTicket.findUnique({
+      where: { id: ticket.id },
+      include: {
+        messages: {
+          orderBy: { createdAt: 'asc' },
+          select: {
+            id: true,
+            senderType: true,
+            text: true,
+            createdAt: true,
+          },
+        },
+        ride: {
+          select: { id: true, pickupPoint: true, dropoffPoint: true },
+        },
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'تم إنشاء التذكرة بنجاح',
+      ticket: createdTicket,
+    });
+  } catch (error) {
+    console.error('Error creating ticket:', error);
+    res.status(500).json({ success: false, error: 'خطأ في إنشاء التذكرة' });
+  }
+}
+
+// ── GET /api/v1/support/tickets ───────────────────────
+async function getUserTicketsHandler(req, res) {
+  try {
+    const userId = req.user.userId;
+
+    const tickets = await prisma.supportTicket.findMany({
+      where: { userId },
+      orderBy: { updatedAt: 'desc' },
+      include: {
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: 1, // آخر رسالة فقط للمعاينة
+          select: {
+            id: true,
+            senderType: true,
+            text: true,
+            createdAt: true,
+          },
+        },
+        ride: {
+          select: { id: true, pickupPoint: true, dropoffPoint: true },
+        },
+      },
+    });
+
+    res.json({ success: true, tickets });
+  } catch (error) {
+    console.error('Error fetching user tickets:', error);
+    res.status(500).json({ success: false, error: 'خطأ في جلب التذاكر' });
+  }
+}
+
+// ── GET /api/v1/support/tickets/:ticketId ─────────────
+async function getTicketDetailsHandler(req, res) {
+  try {
+    const userId = req.user.userId;
+    const { ticketId } = req.params;
+
+    const ticket = await prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+      include: {
+        messages: {
+          orderBy: { createdAt: 'asc' },
+          select: {
+            id: true,
+            senderType: true,
+            text: true,
+            createdAt: true,
+          },
+        },
+        ride: {
+          select: { id: true, pickupPoint: true, dropoffPoint: true, status: true },
+        },
+      },
+    });
+
+    if (!ticket) {
+      return res.status(404).json({ success: false, error: 'التذكرة غير موجودة' });
+    }
+
+    if (ticket.userId !== userId) {
+      return res.status(403).json({ success: false, error: 'غير مصرح لك بمشاهدة هذه التذكرة' });
+    }
+
+    res.json({ success: true, ticket });
+  } catch (error) {
+    console.error('Error fetching ticket details:', error);
+    res.status(500).json({ success: false, error: 'خطأ في جلب تفاصيل التذكرة' });
+  }
+}
+
+// ── POST /api/v1/support/tickets/:ticketId/messages ───
+async function addTicketMessageHandler(req, res) {
+  try {
+    const userId = req.user.userId;
+    const { ticketId } = req.params;
+    const { text } = req.body;
+
+    // التحقق من وجود التذكرة وملكيتها
+    const ticket = await prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+      select: { id: true, userId: true, status: true },
+    });
+
+    if (!ticket) {
+      return res.status(404).json({ success: false, error: 'التذكرة غير موجودة' });
+    }
+
+    if (ticket.userId !== userId) {
+      return res.status(403).json({ success: false, error: 'غير مصرح لك بإضافة رسالة لهذه التذكرة' });
+    }
+
+    if (ticket.status !== 'OPEN' && ticket.status !== 'IN_PROGRESS') {
+      return res.status(400).json({ success: false, error: 'لا يمكن إضافة رسالة لتذكرة مغلقة' });
+    }
+
+    // إضافة الرسالة وتحديث وقت التذكرة
+    const message = await prisma.$transaction(async (tx) => {
+      const newMessage = await tx.supportMessage.create({
+        data: {
+          ticketId,
+          userId,
+          senderType: 'USER',
+          text: text.trim(),
+        },
+      });
+
+      await tx.supportTicket.update({
+        where: { id: ticketId },
+        data: { updatedAt: new Date() },
+      });
+
+      return newMessage;
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'تم إضافة الرسالة بنجاح',
+      data: {
+        id: message.id,
+        senderType: message.senderType,
+        text: message.text,
+        createdAt: message.createdAt.toISOString(),
+      },
+    });
+  } catch (error) {
+    console.error('Error adding ticket message:', error);
+    res.status(500).json({ success: false, error: 'خطأ في إضافة الرسالة' });
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  LEGACY HANDLERS (مُحدَّثة للتوافق مع الـ schema الجديد)
+// ═══════════════════════════════════════════════════════
+
+// ── User: إرسال رسالة دعم (ينشئ تذكرة إن لم توجد مفتوحة) ──
 async function createUserMessageHandler(req, res) {
   try {
     const userId = req.user.userId;
@@ -8,14 +235,44 @@ async function createUserMessageHandler(req, res) {
     if (typeof text !== 'string' || text.trim() === '') {
       return res.status(400).json({ error: 'نص الرسالة مطلوب' });
     }
-    const message = await prisma.supportMessage.create({
-      data: { userId, sender: 'USER', text: text.trim() },
+
+    // البحث عن تذكرة مفتوحة للمستخدم أو إنشاء واحدة جديدة
+    let ticket = await prisma.supportTicket.findFirst({
+      where: { userId, status: { in: ['OPEN', 'IN_PROGRESS'] } },
+      orderBy: { updatedAt: 'desc' },
     });
+
+    if (!ticket) {
+      ticket = await prisma.supportTicket.create({
+        data: {
+          userId,
+          subject: 'محادثة دعم',
+          status: 'OPEN',
+        },
+      });
+    }
+
+    const message = await prisma.supportMessage.create({
+      data: {
+        ticketId: ticket.id,
+        userId,
+        senderType: 'USER',
+        text: text.trim(),
+      },
+    });
+
+    // تحديث updatedAt
+    await prisma.supportTicket.update({
+      where: { id: ticket.id },
+      data: { updatedAt: new Date() },
+    });
+
     res.status(201).json({
       id: message.id,
-      sender: message.sender,
+      senderType: message.senderType,
       text: message.text,
       createdAt: message.createdAt.toISOString(),
+      ticketId: message.ticketId,
     });
   } catch (error) {
     console.error(error);
@@ -23,20 +280,30 @@ async function createUserMessageHandler(req, res) {
   }
 }
 
-// ── User: جلب محادثته بالكامل ───────────────────────
+// ── User: جلب محادثته بالكامل (جميع رسائل تذاكره) ───
 async function getUserMessagesHandler(req, res) {
   try {
     const userId = req.user.userId;
     const messages = await prisma.supportMessage.findMany({
-      where: { userId },
+      where: {
+        ticket: { userId },
+      },
       orderBy: { createdAt: 'asc' },
+      include: {
+        ticket: { select: { id: true, subject: true, status: true } },
+      },
     });
-    res.json(messages.map((m) => ({
-      id: m.id,
-      sender: m.sender,
-      text: m.text,
-      createdAt: m.createdAt.toISOString(),
-    })));
+    res.json(
+      messages.map((m) => ({
+        id: m.id,
+        ticketId: m.ticketId,
+        ticketSubject: m.ticket.subject,
+        ticketStatus: m.ticket.status,
+        senderType: m.senderType,
+        text: m.text,
+        createdAt: m.createdAt.toISOString(),
+      }))
+    );
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'خطأ أثناء جلب المحادثة' });
@@ -46,27 +313,37 @@ async function getUserMessagesHandler(req, res) {
 // ── Admin: قائمة المحادثات (مستخدم واحد لكل مدخل) ────
 async function listConversationsHandler(req, res) {
   try {
-    const participants = await prisma.supportMessage.findMany({
+    const tickets = await prisma.supportTicket.findMany({
       distinct: ['userId'],
       select: { userId: true },
+      orderBy: { updatedAt: 'desc' },
     });
+
     const conversations = await Promise.all(
-      participants.map(async ({ userId }) => {
-        const last = await prisma.supportMessage.findFirst({
+      tickets.map(async ({ userId }) => {
+        const lastTicket = await prisma.supportTicket.findFirst({
           where: { userId },
-          orderBy: { createdAt: 'desc' },
-          include: { user: { select: { firstName: true, lastName: true } } },
+          orderBy: { updatedAt: 'desc' },
+          include: {
+            user: { select: { firstName: true, lastName: true } },
+            messages: {
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+            },
+          },
         });
+        const lastMessage = lastTicket?.messages?.[0];
         return {
           userId,
-          userName: `${last.user?.firstName || ''} ${last.user?.lastName || ''}`.trim() || 'مستخدم',
-          lastMessage: last.text,
-          lastSender: last.sender,
-          lastAt: last.createdAt.toISOString(),
+          userName: `${lastTicket?.user?.firstName || ''} ${lastTicket?.user?.lastName || ''}`.trim() || 'مستخدم',
+          lastMessage: lastMessage?.text || '',
+          lastSenderType: lastMessage?.senderType || null,
+          lastAt: lastTicket?.updatedAt?.toISOString() || null,
+          ticketId: lastTicket?.id || null,
         };
       })
     );
-    conversations.sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1)); // الأحدث أولاً
+
     res.json(conversations);
   } catch (error) {
     console.error(error);
@@ -74,27 +351,42 @@ async function listConversationsHandler(req, res) {
   }
 }
 
-// ── Admin: محادثة مستخدم معيّن ──────────────────────
+// ── Admin: محادثة مستخدم معيّن (جميع تذاكره مع رسائلها) ──
 async function getAdminUserMessagesHandler(req, res) {
   try {
     const { userId } = req.params;
-    const messages = await prisma.supportMessage.findMany({
+
+    const tickets = await prisma.supportTicket.findMany({
       where: { userId },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { updatedAt: 'desc' },
+      include: {
+        messages: {
+          orderBy: { createdAt: 'asc' },
+        },
+      },
     });
-    res.json(messages.map((m) => ({
-      id: m.id,
-      sender: m.sender,
-      text: m.text,
-      createdAt: m.createdAt.toISOString(),
-    })));
+
+    // تحويل إلى قائمة رسائل مسطحة مع بيانات التذكرة
+    const flatMessages = tickets.flatMap((ticket) =>
+      ticket.messages.map((m) => ({
+        id: m.id,
+        ticketId: m.ticketId,
+        ticketSubject: ticket.subject,
+        ticketStatus: ticket.status,
+        senderType: m.senderType,
+        text: m.text,
+        createdAt: m.createdAt.toISOString(),
+      }))
+    );
+
+    res.json(flatMessages);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'خطأ أثناء جلب محادثة المستخدم' });
   }
 }
 
-// ── Admin: رد بدور ADMIN على مستخدم ─────────────────
+// ── Admin: رد بدور ADMIN على تذكرة مستخدم ────────────
 async function createAdminMessageHandler(req, res) {
   try {
     const { userId } = req.params;
@@ -102,15 +394,42 @@ async function createAdminMessageHandler(req, res) {
     if (typeof text !== 'string' || text.trim() === '') {
       return res.status(400).json({ error: 'نص الرسالة مطلوب' });
     }
+
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) return res.status(404).json({ error: 'المستخدم غير موجود' });
 
-    const message = await prisma.supportMessage.create({
-      data: { userId, sender: 'ADMIN', text: text.trim() },
+    // البحث عن آخر تذكرة مفتوحة للمستخدم
+    let ticket = await prisma.supportTicket.findFirst({
+      where: { userId, status: { in: ['OPEN', 'IN_PROGRESS'] } },
+      orderBy: { updatedAt: 'desc' },
     });
+
+    if (!ticket) {
+      return res.status(400).json({ error: 'لا توجد تذكرة مفتوحة لهذا المستخدم' });
+    }
+
+    const message = await prisma.$transaction(async (tx) => {
+      const newMessage = await tx.supportMessage.create({
+        data: {
+          ticketId: ticket.id,
+          userId,
+          senderType: 'ADMIN',
+          text: text.trim(),
+        },
+      });
+
+      await tx.supportTicket.update({
+        where: { id: ticket.id },
+        data: { updatedAt: new Date() },
+      });
+
+      return newMessage;
+    });
+
     res.status(201).json({
       id: message.id,
-      sender: message.sender,
+      ticketId: message.ticketId,
+      senderType: message.senderType,
       text: message.text,
       createdAt: message.createdAt.toISOString(),
     });
@@ -121,6 +440,13 @@ async function createAdminMessageHandler(req, res) {
 }
 
 module.exports = {
+  // New ticket-based handlers
+  getFAQsHandler,
+  createTicketHandler,
+  getUserTicketsHandler,
+  getTicketDetailsHandler,
+  addTicketMessageHandler,
+  // Legacy handlers (updated for new schema)
   createUserMessageHandler,
   getUserMessagesHandler,
   listConversationsHandler,

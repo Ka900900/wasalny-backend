@@ -50,6 +50,20 @@ enum WithdrawStatus {
   COMPLETED
 }
 
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_ON_USER
+  RESOLVED
+  CLOSED
+}
+
+enum SenderType {
+  USER
+  ADMIN
+  SYSTEM
+}
+
 model User {
   id           String   @id @default(cuid())
   firebaseUid  String?  @unique
@@ -76,17 +90,52 @@ model User {
   ratingsReceived Rating[] @relation("RatingsReceived")
   wallet          Wallet?
   supportMessages  SupportMessage[]
+  supportTickets   SupportTicket[]
   sentMessages     Message[] @relation("SentMessages")
   receivedMessages Message[] @relation("ReceivedMessages")
 }
 
-model SupportMessage {
+model FAQ {
   id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  sender    String
-  text      String
+  question  String
+  answer    String
+  category  String?
+  order     Int      @default(0)
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category])
+}
+
+model SupportTicket {
+  id        String       @id @default(cuid())
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rideId    String?
+  ride      RideRequest? @relation(fields: [rideId], references: [id], onDelete: SetNull)
+  subject   String
+  status    TicketStatus @default(OPEN)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  messages SupportMessage[]
+
+  @@index([userId])
+  @@index([status])
+}
+
+model SupportMessage {
+  id         String     @id @default(cuid())
+  ticketId   String
+  ticket     SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User       @relation(fields: [userId], references: [id])
+  senderType SenderType @default(USER)
+  text       String
+  createdAt  DateTime   @default(now())
+
+  @@index([ticketId])
 }
 
 model DriverProfile {
@@ -185,6 +234,7 @@ model RideRequest {
 
   walletTransactions WalletTransaction[]
   messages          Message[]
+  supportTickets    SupportTicket[]
 
   driverCurrentLat Float?
   driverCurrentLng Float?
