@@ -13,6 +13,7 @@ const { validate } = require('./middleware/validate');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 const { initSocket, emitRideStatus, emitDriverLocation, emitEtaUpdate, sendNotification, SocketEvents } = require('./config/socket');
 const { initChatSocket } = require('./sockets/chat.socket');
+const { initSupportSocket } = require('./sockets/support.socket');
 const { createKashierSession, verifyWebhookSignature, queryKashierTransaction } = require('./services/kashier');
 const { initFirebase, verifyFirebaseToken } = require('./config/firebase');
 const { calculateDistance, calculateFare, estimateDuration, getPricePerKm, haversineDistance } = require('./services/geo');
@@ -140,6 +141,7 @@ app.use((req, res, next) => {
 // ── Socket.IO ────────────────────────────────────────
 const io = initSocket(server);
 initChatSocket(io);
+initSupportSocket(io);
 app.locals.io = io;
 
 // ── Routes ───────────────────────────────────────────

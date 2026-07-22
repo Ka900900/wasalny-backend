@@ -93,6 +93,7 @@ model User {
   supportTickets   SupportTicket[]
   sentMessages     Message[] @relation("SentMessages")
   receivedMessages Message[] @relation("ReceivedMessages")
+  rideMessages     RideMessage[] @relation("RideMessageSender")
 }
 
 model FAQ {
@@ -234,6 +235,7 @@ model RideRequest {
 
   walletTransactions WalletTransaction[]
   messages          Message[]
+  rideMessages      RideMessage[]
   supportTickets    SupportTicket[]
 
   driverCurrentLat Float?
@@ -370,4 +372,18 @@ model Message {
   receiver   User        @relation("ReceivedMessages", fields: [receiverId], references: [id])
 
   @@index([tripId])
+}
+
+model RideMessage {
+  id        String   @id @default(cuid())
+  rideId    String
+  senderId  String
+  senderType String
+  text      String
+  createdAt DateTime @default(now())
+
+  ride   RideRequest @relation(fields: [rideId], references: [id], onDelete: Cascade)
+  sender User       @relation("RideMessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([rideId])
 }

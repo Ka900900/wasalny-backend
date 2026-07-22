@@ -10,6 +10,7 @@ const {
   getUserTicketsHandler,
   getTicketDetailsHandler,
   addTicketMessageHandler,
+  getTicketMessagesHandler,
   // Legacy handlers (backward compatibility)
   createUserMessageHandler,
   getUserMessagesHandler,
@@ -31,6 +32,9 @@ router.get('/tickets/:ticketId', authenticateToken, getTicketDetailsHandler);
 
 // POST /api/v1/support/tickets/:ticketId/messages - إضافة رسالة لتذكرة
 router.post('/tickets/:ticketId/messages', authenticateToken, validate(addTicketMessageSchema), addTicketMessageHandler);
+
+// GET /api/v1/support/tickets/:ticketId/messages - جلب رسائل تذكرة
+router.get('/tickets/:ticketId/messages', authenticateToken, getTicketMessagesHandler);
 
 // ── Legacy Routes (Backward Compatibility) ────────────
 // أي مستخدم مسجّل يمكنه إرسال/قراءة محادثته

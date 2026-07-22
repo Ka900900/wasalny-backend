@@ -207,6 +207,26 @@ async function addTicketMessageHandler(req, res) {
       return newMessage;
     });
 
+    // بث الرسالة عبر Socket.IO إلى غرفة الدعم
+    try {
+      const io = req.app.locals.io;
+      if (io) {
+        const room = `support_${ticketId}`;
+        const payload = {
+          id: message.id,
+          ticketId: message.ticketId,
+          senderType: message.senderType,
+          text: message.text,
+          createdAt: message.createdAt.toISOString(),
+        };
+        io.to(room).emit('receive_support_message', payload);
+        console.log(`🎫 REST: Support message broadcast to room ${room}`);
+      }
+    } catch (socketErr) {
+      // فشل البث لا يمنع نجاح العملية
+      console.error('🎫 REST: Failed to broadcast message via socket:', socketErr.message);
+    }
+
     res.status(201).json({
       success: true,
       message: 'تم إضافة الرسالة بنجاح',
@@ -220,6 +240,58 @@ async function addTicketMessageHandler(req, res) {
   } catch (error) {
     console.error('Error adding ticket message:', error);
     res.status(500).json({ success: false, error: 'خطأ في إضافة الرسالة' });
+  }
+}
+
+// ── GET /api/v1/support/tickets/:ticketId/messages ───
+async function getTicketMessagesHandler(req, res) {
+  try {
+    const userId = req.user.userId;
+    const { ticketId } = req.params;
+
+    // التحقق من وجود التذكرة
+    const ticket = await prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+      select: { id: true, userId: true, status: true, subject: true },
+    });
+
+    if (!ticket) {
+      return res.status(404).json({ success: false, error: 'التذكرة غير موجودة' });
+    }
+
+    // السماح لصاحب التذكرة أو ADMIN بمشاهدة الرسائل
+    const isAdmin = req.user.role === 'ADMIN' || req.user.role === 'admin';
+    if (ticket.userId !== userId && !isAdmin) {
+      return res.status(403).json({ success: false, error: 'غير مصرح لك بمشاهدة رسائل هذه التذكرة' });
+    }
+
+    // جلب جميع رسائل التذكرة
+    const messages = await prisma.supportMessage.findMany({
+      where: { ticketId },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        senderType: true,
+        text: true,
+        createdAt: true,
+      },
+    });
+
+    res.json({
+      success: true,
+      ticket: {
+        id: ticket.id,
+        status: ticket.status,
+        subject: ticket.subject,
+      },
+      messages: messages.map((m) => ({
+        ...m,
+        createdAt: m.createdAt.toISOString(),
+      })),
+    });
+  } catch (error) {
+    console.error('Error fetching ticket messages:', error);
+    res.status(500).json({ success: false, error: 'خطأ في جلب رسائل التذكرة' });
   }
 }
 
@@ -446,6 +518,7 @@ module.exports = {
   getUserTicketsHandler,
   getTicketDetailsHandler,
   addTicketMessageHandler,
+  getTicketMessagesHandler,
   // Legacy handlers (updated for new schema)
   createUserMessageHandler,
   getUserMessagesHandler,
