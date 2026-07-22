@@ -91,23 +91,8 @@ async function startRide(userId, rideId) {
 
 async function completeRide(userId, rideId) {
   const result = await prisma.$transaction(async (tx) => {
-    // تحقق مبدئي من ملكية الرحلة وحالتها
-    const ride = await tx.rideRequest.findUnique({
-      where: { id: rideId },
-      select: { id: true, driverId: true, status: true, paymentMethod: true },
-    });
-    if (!ride) throw new Error('الرحلة غير موجودة');
-    if (ride.driverId !== userId) throw new Error('هذه الرحلة ليست مخصصة لك');
-    if (ride.status !== 'STARTED') throw new Error('لا يمكن إنهاء رحلة لم تبدأ بعد');
-
-    // الدفع من المحفظة: خصم العميل + أرباح الكابتن فوراً (محفظتنا الداخلية موثوقة)
-    if ((ride.paymentMethod || 'wallet') === 'wallet') {
-      return settleRide(tx, { rideId, driverId: userId });
-    }
-
-    // الدفع ببطاقة: ننهي الرحلة فقط، والتسوية المالية تتم بعد تأكيد كاشير (webhook/verify)
-    const updated = await tx.rideRequest.update({ where: { id: rideId }, data: { status: 'COMPLETED' } });
-    return { updatedRide: updated, ride };
+    // settleRide تتعامل مع جميع طرق الدفع (wallet / cash / online / card)
+    return settleRide(tx, { rideId, driverId: userId });
   });
 
   // مزامنة الحالة مع Firestore mirror (غير حرجة) — بعد نجاح المعاملة

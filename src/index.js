@@ -1091,28 +1091,14 @@ app.put('/api/v1/driver/ride/start/:rideId', authenticateToken, requireRole('DRI
 app.put('/api/v1/driver/ride/complete/:rideId', authenticateToken, requireRole('DRIVER'), async (req, res) => {
   const { rideId } = req.params;
   try {
-    const ride = await prisma.rideRequest.findUnique({
-      where: { id: rideId },
-      select: { id: true, driverId: true, status: true, paymentMethod: true },
-    });
-    if (!ride) return res.status(404).json({ error: 'الرحلة غير موجودة' });
-    if (ride.driverId !== req.user.userId) return res.status(403).json({ error: 'هذه الرحلة ليست مخصصة لك' });
-    if (ride.status !== 'STARTED') return res.status(400).json({ error: 'لا يمكن إنهاء رحلة لم تبدأ بعد' });
-
-    let result;
-    if ((ride.paymentMethod || 'wallet') === 'wallet') {
-      // محفظة: تُسوّى مالياً فوراً
-      result = await settleRide(null, { rideId, driverId: req.user.userId });
-    } else {
-      // بطاقة: لا تسوية الآن — تتم بعد تأكيد كاشير (webhook/verify)
-      const updated = await prisma.rideRequest.update({ where: { id: rideId }, data: { status: 'COMPLETED' } });
-      result = { updatedRide: updated };
-    }
+    // settleRide تتعامل مع جميع طرق الدفع (wallet / cash / online / card)
+    // وتنفذ العمليات المالية داخل Prisma $transaction لضمان atomicity
+    const result = await settleRide(null, { rideId, driverId: req.user.userId });
     emitRideStatus(io, rideId, 'COMPLETED');
     res.json({ message: 'تم إنهاء الرحلة', ride: result.updatedRide });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'خطأ في إنهاء الرحلة' });
+    res.status(500).json({ error: error.message || 'خطأ في إنهاء الرحلة' });
   }
 });
 

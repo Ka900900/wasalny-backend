@@ -328,22 +328,28 @@ async function rateRide(userId, { rideId, toUserId, rating, comment }) {
 // كل الحركات المالية تُسجَّل كمعاملات على محافظ العميل/الكابتن/المنصة،
 // ولا يتم المساس بـ DriverProfile.balance (مهمَل — المحفظة هي المصدر الوحيد للأرصدة).
 async function _settleRideCore(tx, { rideId, driverId }) {
+  // جلب الرحلة مع حقل isPaid للتحقق من عدم التكرار
   const ride = await tx.rideRequest.findUnique({
     where: { id: rideId },
-    select: { id: true, riderId: true, driverId: true, price: true, paymentMethod: true, status: true },
+    select: { id: true, riderId: true, driverId: true, price: true, paymentMethod: true, status: true, isPaid: true },
   });
   if (!ride) throw new Error('الرحلة غير موجودة');
   if (ride.driverId && ride.driverId !== driverId) throw new Error('هذه الرحلة ليست مخصصة لك');
   if (ride.status === 'COMPLETED' && ride.isPaid) throw new Error('تم تسوية هذه الرحلة مسبقاً');
   if (ride.status !== 'STARTED' && ride.status !== 'COMPLETED') throw new Error('لا يمكن تسوية رحلة في هذه الحالة');
 
+  // حساب العمولة وأرباح الكابتن
   const rate = await getCommissionRate(driverId);
   const price = new Prisma.Decimal(ride.price);
   const commission = price.mul(rate).toDecimalPlaces(2);
-  const net = price.minus(commission);
+  const driverEarning = price.minus(commission);
 
-  // 1) خصم قيمة الرحلة من محفظة العميل (في حال الدفع من المحفظة)
-  if ((ride.paymentMethod || 'wallet') === 'wallet') {
+  const paymentMethod = ride.paymentMethod || 'wallet';
+
+  // معالجة مالية حسب طريقة الدفع
+  if (paymentMethod === 'wallet') {
+    // ── الدفع من المحفظة ──────────────────────────
+    // خصم قيمة الرحلة كاملة من محفظة الراكب
     const riderWallet = await tx.wallet.findUnique({ where: { userId: ride.riderId } });
     if (!riderWallet || riderWallet.balance.lt(price)) {
       throw new Error('رصيد العميل غير كافٍ لخصم قيمة الرحلة');
@@ -361,45 +367,75 @@ async function _settleRideCore(tx, { rideId, driverId }) {
         rideId: ride.id,
       },
     });
+
+    // إضافة أرباح الكابتن (price - commission) إلى محفظته
+    const capWallet = await tx.wallet.findUnique({ where: { userId: ride.driverId } });
+    if (!capWallet) throw new Error('محفظة الكابتن غير موجودة');
+    const capNewBal = capWallet.balance.plus(driverEarning);
+    await tx.wallet.update({
+      where: { id: capWallet.id },
+      data: { balance: capNewBal, totalEarned: { increment: driverEarning } },
+    });
+    await tx.walletTransaction.create({
+      data: {
+        walletId: capWallet.id,
+        type: 'DRIVER_EARNING',
+        amount: driverEarning,
+        balanceAfter: capNewBal,
+        description: `أرباح الرحلة ${ride.id}`,
+        status: 'COMPLETED',
+        rideId: ride.id,
+      },
+    });
+  } else if (paymentMethod === 'cash') {
+    // ── الدفع نقداً ───────────────────────────────
+    // الكابتن قبض كامل القيمة من الراكب، يخصم منه العمولة فقط
+    const capWallet = await tx.wallet.findUnique({ where: { userId: ride.driverId } });
+    if (!capWallet) throw new Error('محفظة الكابتن غير موجودة');
+    if (capWallet.balance.lt(commission)) {
+      throw new Error('رصيد المحفظة غير كافٍ لخصم العمولة');
+    }
+    const capNewBal = capWallet.balance.minus(commission);
+    await tx.wallet.update({
+      where: { id: capWallet.id },
+      data: { balance: capNewBal, totalEarned: { increment: driverEarning } },
+    });
+    await tx.walletTransaction.create({
+      data: {
+        walletId: capWallet.id,
+        type: 'COMMISSION',
+        amount: commission,
+        balanceAfter: capNewBal,
+        description: `عمولة التطبيق ${(rate * 100).toString()}% - الرحلة ${ride.id} (كاش)`,
+        status: 'COMPLETED',
+        rideId: ride.id,
+        metadata: { rate: rate.toString(), net: driverEarning.toString() },
+      },
+    });
+  } else {
+    // ── الدفع أونلاين / بطاقة ─────────────────────
+    // المنصة تستلم قيمة الرحلة وتضيف أرباح الكابتن لمحفظته
+    const capWallet = await tx.wallet.findUnique({ where: { userId: ride.driverId } });
+    if (!capWallet) throw new Error('محفظة الكابتن غير موجودة');
+    const capNewBal = capWallet.balance.plus(driverEarning);
+    await tx.wallet.update({
+      where: { id: capWallet.id },
+      data: { balance: capNewBal, totalEarned: { increment: driverEarning } },
+    });
+    await tx.walletTransaction.create({
+      data: {
+        walletId: capWallet.id,
+        type: 'DRIVER_EARNING',
+        amount: driverEarning,
+        balanceAfter: capNewBal,
+        description: `أرباح الرحلة ${ride.id} (${paymentMethod})`,
+        status: 'COMPLETED',
+        rideId: ride.id,
+      },
+    });
   }
 
-  // 2) أرباح الكابتن: إجمالي القيمة ثم خصم عمولة التطبيق (نصيب المنصة)
-  const capWallet = await tx.wallet.findUnique({ where: { userId: ride.driverId } });
-  if (!capWallet) throw new Error('محفظة الكابتن غير موجودة');
-
-  const capAfterEarn = capWallet.balance.plus(price);
-  await tx.wallet.update({
-    where: { id: capWallet.id },
-    data: { balance: capAfterEarn, totalEarned: { increment: net } },
-  });
-  await tx.walletTransaction.create({
-    data: {
-      walletId: capWallet.id,
-      type: 'DRIVER_EARNING',
-      amount: price,
-      balanceAfter: capAfterEarn,
-      description: `أرباح الرحلة ${ride.id} (إجمالي)`,
-      status: 'COMPLETED',
-      rideId: ride.id,
-    },
-  });
-
-  const capAfterComm = capAfterEarn.minus(commission);
-  await tx.wallet.update({ where: { id: capWallet.id }, data: { balance: capAfterComm } });
-  await tx.walletTransaction.create({
-    data: {
-      walletId: capWallet.id,
-      type: 'COMMISSION',
-      amount: commission,
-      balanceAfter: capAfterComm,
-      description: `عمولة التطبيق ${(rate * 100).toString()}%`,
-      status: 'COMPLETED',
-      rideId: ride.id,
-      metadata: { rate: rate.toString(), net: net.toString() },
-    },
-  });
-
-  // 3) تثبيت القيم المالية على الرحلة + إغلاقها
+  // تثبيت القيم المالية على الرحلة + إغلاقها
   const updated = await tx.rideRequest.update({
     where: { id: ride.id },
     data: {
@@ -407,12 +443,12 @@ async function _settleRideCore(tx, { rideId, driverId }) {
       isPaid: true,
       paidAt: new Date(),
       commission,
-      driverEarning: net,
+      driverEarning,
       commissionRate: rate,
     },
   });
 
-  // 4) تحديث عداد الرحلات فقط — لا نمسّ DriverProfile.balance (مهمل)
+  // تحديث عداد الرحلات للكابتن
   await tx.driverProfile.update({
     where: { userId: ride.driverId },
     data: { totalTrips: { increment: 1 } },
