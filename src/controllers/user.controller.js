@@ -1,4 +1,4 @@
-const { getProfile, updateProfile } = require('../services/user.service');
+const { getProfile, updateProfile, deleteAccount } = require('../services/user.service');
 
 async function getProfileHandler(req, res) {
   try {
@@ -20,4 +20,14 @@ async function updateProfileHandler(req, res) {
   }
 }
 
-module.exports = { getProfileHandler, updateProfileHandler };
+async function deleteAccountHandler(req, res) {
+  try {
+    await deleteAccount(req.user.userId);
+    res.json({ success: true, message: 'تم حذف الحساب بنجاح' });
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({ success: false, error: error.message || 'خطأ في حذف الحساب' });
+  }
+}
+
+module.exports = { getProfileHandler, updateProfileHandler, deleteAccountHandler };

@@ -131,7 +131,7 @@ model SupportMessage {
   ticketId   String
   ticket     SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   userId     String
-  user       User       @relation(fields: [userId], references: [id])
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   senderType SenderType @default(USER)
   text       String
   createdAt  DateTime   @default(now())
@@ -191,7 +191,7 @@ model RideOption {
 model RideRequest {
   id           String          @id @default(cuid())
   riderId      String
-  rider        User            @relation("RiderRides", fields: [riderId], references: [id])
+  rider        User            @relation("RiderRides", fields: [riderId], references: [id], onDelete: Cascade)
 
   rideOptionId String?
   rideOption   RideOption?     @relation(fields: [rideOptionId], references: [id])
@@ -229,7 +229,7 @@ model RideRequest {
   updatedAt DateTime @updatedAt
 
   driverId String?
-  driver   User?   @relation("DriverRides", fields: [driverId], references: [id], onDelete: Restrict)
+  driver   User?   @relation("DriverRides", fields: [driverId], references: [id], onDelete: SetNull)
 
   ratings Rating[]
 
@@ -248,9 +248,9 @@ model Rating {
   rideId     String
   ride       RideRequest @relation(fields: [rideId], references: [id], onDelete: Cascade)
   fromUserId String
-  fromUser   User     @relation("RatingsGiven", fields: [fromUserId], references: [id])
+  fromUser   User     @relation("RatingsGiven", fields: [fromUserId], references: [id], onDelete: Cascade)
   toUserId   String
-  toUser     User     @relation("RatingsReceived", fields: [toUserId], references: [id])
+  toUser     User     @relation("RatingsReceived", fields: [toUserId], references: [id], onDelete: Cascade)
   rating     Int
   comment    String?
   createdAt  DateTime @default(now())
@@ -368,8 +368,8 @@ model Message {
   createdAt  DateTime    @default(now())
 
   trip       RideRequest @relation(fields: [tripId], references: [id], onDelete: Cascade)
-  sender     User        @relation("SentMessages", fields: [senderId], references: [id])
-  receiver   User        @relation("ReceivedMessages", fields: [receiverId], references: [id])
+  sender     User        @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver   User        @relation("ReceivedMessages", fields: [receiverId], references: [id], onDelete: Cascade)
 
   @@index([tripId])
 }
