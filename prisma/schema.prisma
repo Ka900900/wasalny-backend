@@ -181,7 +181,7 @@ model RideRequest {
   driverId String?
   driver   User?   @relation("DriverRides", fields: [driverId], references: [id], onDelete: Restrict)
 
-  rating Rating?
+  ratings Rating[]
 
   walletTransactions WalletTransaction[]
   messages          Message[]
@@ -193,7 +193,7 @@ model RideRequest {
 
 model Rating {
   id         String   @id @default(cuid())
-  rideId     String   @unique
+  rideId     String
   ride       RideRequest @relation(fields: [rideId], references: [id], onDelete: Cascade)
   fromUserId String
   fromUser   User     @relation("RatingsGiven", fields: [fromUserId], references: [id])
@@ -202,6 +202,9 @@ model Rating {
   rating     Int
   comment    String?
   createdAt  DateTime @default(now())
+
+  @@unique([rideId, fromUserId])
+  @@index([toUserId])
 }
 
 model Wallet {

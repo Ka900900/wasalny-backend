@@ -729,7 +729,11 @@ app.get('/api/v1/rides/history', authenticateToken, async (req, res) => {
       include: {
         rider: { select: { id: true, firstName: true, lastName: true } },
         driver: { select: { id: true, firstName: true, lastName: true } },
-        rating: true,
+        ratings: {
+          include: {
+            fromUser: { select: { id: true, firstName: true, lastName: true } },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
       take: 50,

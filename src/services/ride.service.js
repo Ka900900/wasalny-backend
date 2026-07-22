@@ -311,17 +311,38 @@ async function rateRide(userId, { rideId, toUserId, rating, comment }) {
   if (!isRider && !isDriver) throw new Error('غير مصرح: أنت لست طرفاً في هذه الرحلة');
   if (toUserId !== (isRider ? ride.driverId : ride.riderId)) throw new Error('يمكنك فقط تقييم الطرف الآخر في الرحلة');
 
-  const existing = await prisma.rating.findUnique({ where: { rideId } });
-  if (existing) throw new Error('تم تقييم هذه الرحلة بالفعل');
+  // منع التكرار: التحقق لكل مستخدم على حدة
+  const existing = await prisma.rating.findFirst({
+    where: { rideId, fromUserId: userId },
+  });
+  if (existing) throw new Error('لقد قمت بتقييم هذه الرحلة من قبل');
 
-  const newRating = await prisma.rating.create({ data: { rideId, fromUserId: userId, toUserId, rating, comment: comment || null } });
+  const newRating = await prisma.rating.create({
+    data: {
+      rideId,
+      fromUserId: userId,
+      toUserId,
+      rating,
+      comment: comment || null,
+    },
+  });
 
+  let averageRating = null;
+
+  // إذا كان التقييم للكابتن → تحديث متوسط تقييماته
   if (ride.driverId === toUserId) {
-    const avg = await prisma.rating.aggregate({ where: { toUserId }, _avg: { rating: true } });
-    await prisma.driverProfile.update({ where: { userId: toUserId }, data: { ratingAvg: avg._avg.rating || 0 } });
+    const agg = await prisma.rating.aggregate({
+      where: { toUserId },
+      _avg: { rating: true },
+    });
+    averageRating = agg._avg.rating ? Math.round(agg._avg.rating * 10) / 10 : 0;
+    await prisma.driverProfile.update({
+      where: { userId: toUserId },
+      data: { ratingAvg: averageRating },
+    });
   }
 
-  return newRating;
+  return { rating: newRating, averageRating, toUserId };
 }
 
 // ── تسوية الرحلة الموحدة (نظام Double-Entry عبر المحفظة) ──

@@ -86,7 +86,11 @@ async function getRideHistoryHandler(req, res) {
       include: {
         rider: { select: { id: true, firstName: true, lastName: true } },
         driver: { select: { id: true, firstName: true, lastName: true } },
-        rating: true,
+        ratings: {
+          include: {
+            fromUser: { select: { id: true, firstName: true, lastName: true } },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
       take: 50,
@@ -179,8 +183,36 @@ async function verifyKashierPaymentHandler(req, res) {
 
 async function rateRideHandler(req, res) {
   try {
-    const rating = await rateRide(req.user.userId, req.body);
-    res.status(201).json({ message: 'تم إضافة التقييم', rating });
+    const result = await rateRide(req.user.userId, req.body);
+    res.status(201).json({
+      message: 'تم إضافة التقييم',
+      rating: result.rating,
+      averageRating: result.averageRating,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({ error: error.message || 'خطأ أثناء إضافة التقييم' });
+  }
+}
+
+/**
+ * معالج التقييم للمسار POST /api/v1/rides/:rideId/rate
+ * يستخرج rideId من params ويضيفه إلى body قبل تمريره للـ service
+ */
+async function rateRideByParamHandler(req, res) {
+  try {
+    const data = {
+      rideId: req.params.rideId,
+      toUserId: req.body.toUserId,
+      rating: req.body.rating,
+      comment: req.body.comment,
+    };
+    const result = await rateRide(req.user.userId, data);
+    res.status(201).json({
+      message: 'تم إضافة التقييم',
+      rating: result.rating,
+      averageRating: result.averageRating,
+    });
   } catch (error) {
     console.error(error);
     res.status(400).json({ error: error.message || 'خطأ أثناء إضافة التقييم' });
@@ -219,5 +251,6 @@ module.exports = {
   initiateKashierPaymentHandler,
   verifyKashierPaymentHandler,
   rateRideHandler,
+  rateRideByParamHandler,
   getRatingsHandler,
 };
