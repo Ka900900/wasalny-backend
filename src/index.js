@@ -12,6 +12,7 @@ const { authenticateToken, requireRole, generateToken } = require('./middleware/
 const { validate } = require('./middleware/validate');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 const { initSocket, emitRideStatus, emitDriverLocation, emitEtaUpdate, sendNotification, SocketEvents } = require('./config/socket');
+const { initChatSocket } = require('./sockets/chat.socket');
 const { createKashierSession, verifyWebhookSignature, queryKashierTransaction } = require('./services/kashier');
 const { initFirebase, verifyFirebaseToken } = require('./config/firebase');
 const { calculateDistance, calculateFare, estimateDuration, getPricePerKm, haversineDistance } = require('./services/geo');
@@ -138,6 +139,7 @@ app.use((req, res, next) => {
 
 // ── Socket.IO ────────────────────────────────────────
 const io = initSocket(server);
+initChatSocket(io);
 app.locals.io = io;
 
 // ── Routes ───────────────────────────────────────────
@@ -775,6 +777,58 @@ app.put('/api/v1/rides/cancel/:rideId', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'خطأ في إلغاء الرحلة' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════
+//  CHAT ENDPOINTS  /api/v1/trips
+// ═══════════════════════════════════════════════════════
+
+/**
+ * @swagger
+ * /api/v1/trips/{tripId}/messages:
+ *   get:
+ *     summary: Get chat messages for a trip
+ *     tags: [Chat]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: tripId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: List of messages
+ */
+app.get('/api/v1/trips/:tripId/messages', authenticateToken, async (req, res) => {
+  const { tripId } = req.params;
+  try {
+    // التحقق من أن المستخدم طرف في الرحلة
+    const ride = await prisma.rideRequest.findUnique({
+      where: { id: tripId },
+      select: { riderId: true, driverId: true },
+    });
+    if (!ride) {
+      return res.status(404).json({ error: 'الرحلة غير موجودة' });
+    }
+    if (ride.riderId !== req.user.userId && ride.driverId !== req.user.userId) {
+      return res.status(403).json({ error: 'ليس لديك صلاحية لعرض رسائل هذه الرحلة' });
+    }
+
+    const messages = await prisma.message.findMany({
+      where: { tripId },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        sender: {
+          select: { id: true, firstName: true, lastName: true },
+        },
+      },
+    });
+
+    res.json({ messages });
+  } catch (error) {
+    console.error('Error fetching messages:', error);
+    res.status(500).json({ error: 'خطأ في جلب الرسائل' });
   }
 });
 
