@@ -157,6 +157,12 @@ model DriverProfile {
   facePhoto      String?         // صورة شخصية (selfie) للتحقق من الهوية
   insurancePhoto String?         // وثيقة التأمين
 
+  // ── صور إضافية للبطاقة والرخصة (الوجه الآخر + Cloudinary Public IDs) ──
+  idCardBackUrl        String?   // رابط صورة ظهر البطاقة الشخصية
+  licenseBackUrl       String?   // رابط صورة ظهر رخصة القيادة
+  idCardBackPublicId   String?   // Cloudinary Public ID لصورة ظهر البطاقة
+  licenseBackPublicId  String?   // Cloudinary Public ID لصورة ظهر الرخصة
+
   isAvailable    Boolean         @default(true)
   currentLat     Float?
   currentLng     Float?

@@ -290,22 +290,74 @@ async function uploadDocuments(req, res) {
     for (const fieldName of Object.keys(files)) {
       const file = files[fieldName][0];
       const result = await uploadToCloudinary(file.buffer, `waslny/captains/${userId}`);
-      uploadedUrls[fieldName] = result.secure_url;
+      uploadedUrls[fieldName] = { url: result.secure_url, publicId: result.public_id };
     }
 
-    // تحديث صورة الكابتن في الداتا بيز (وتقدر تضيف أي حقول تانية للبطاقة والرخصة لو موجودة في Prisma)
-    const updatedUser = await prisma.user.update({
-      where: { id: userId },
-      data: {
-        ...(uploadedUrls.avatar && { avatarUrl: uploadedUrls.avatar }),
-      },
-    });
+    // ── تجهيز بيانات تحديث User (للـ avatar فقط) ──
+    const userUpdateData = {};
+    if (uploadedUrls.avatar) {
+      userUpdateData.avatarUrl = uploadedUrls.avatar.url;
+    }
+
+    // ── تجهيز بيانات تحديث DriverProfile (للمستندات) ──
+    const driverProfileUpdateData = {};
+
+    // الحقول الحالية (بدون publicId)
+    if (uploadedUrls.nationalIdFront) {
+      driverProfileUpdateData.idPhotoFront = uploadedUrls.nationalIdFront.url;
+    }
+    if (uploadedUrls.nationalIdBack) {
+      driverProfileUpdateData.idPhotoBack = uploadedUrls.nationalIdBack.url;
+    }
+    if (uploadedUrls.drivingLicense) {
+      driverProfileUpdateData.licensePhoto = uploadedUrls.drivingLicense.url;
+    }
+
+    // الحقول الجديدة (مع publicId لإدارة الصور على Cloudinary)
+    if (uploadedUrls.idCardBack) {
+      driverProfileUpdateData.idCardBackUrl = uploadedUrls.idCardBack.url;
+      driverProfileUpdateData.idCardBackPublicId = uploadedUrls.idCardBack.publicId;
+    }
+    if (uploadedUrls.licenseBack) {
+      driverProfileUpdateData.licenseBackUrl = uploadedUrls.licenseBack.url;
+      driverProfileUpdateData.licenseBackPublicId = uploadedUrls.licenseBack.publicId;
+    }
+
+    // ── تنفيذ التحديثات بشكل متوازي ──
+    const updates = [];
+    if (Object.keys(userUpdateData).length > 0) {
+      updates.push(prisma.user.update({ where: { id: userId }, data: userUpdateData }));
+    }
+    if (Object.keys(driverProfileUpdateData).length > 0) {
+      updates.push(prisma.driverProfile.update({ where: { userId }, data: driverProfileUpdateData }));
+    }
+
+    let updatedUser = null;
+    let updatedProfile = null;
+
+    if (updates.length > 0) {
+      const results = await Promise.all(updates);
+      // results ترتيبه حسب الترتيب في الـ updates array
+      let idx = 0;
+      if (Object.keys(userUpdateData).length > 0) {
+        updatedUser = results[idx++];
+      }
+      if (Object.keys(driverProfileUpdateData).length > 0) {
+        updatedProfile = results[idx];
+      }
+    } else {
+      // لو ما فيش أي ملفات معروفة، نرجّع المستخدم الحالي
+      updatedUser = await prisma.user.findUnique({ where: { id: userId } });
+    }
 
     return res.status(200).json({
       success: true,
       message: 'تم رفع المستندات بنجاح',
-      documents: uploadedUrls,
+      documents: Object.fromEntries(
+        Object.entries(uploadedUrls).map(([k, v]) => [k, v.url])
+      ),
       user: updatedUser,
+      ...(updatedProfile && { driverProfile: updatedProfile }),
     });
   } catch (error) {
     console.error('❌ Error uploading documents:', error);

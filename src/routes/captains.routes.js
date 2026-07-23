@@ -35,6 +35,8 @@ router.post(
     { name: 'nationalIdBack', maxCount: 1 },
     { name: 'drivingLicense', maxCount: 1 },
     { name: 'avatar', maxCount: 1 },
+    { name: 'idCardBack', maxCount: 1 },
+    { name: 'licenseBack', maxCount: 1 },
   ]),
   uploadDocuments
 );
