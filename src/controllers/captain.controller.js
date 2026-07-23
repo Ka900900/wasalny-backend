@@ -329,7 +329,19 @@ async function uploadDocuments(req, res) {
       updates.push(prisma.user.update({ where: { id: userId }, data: userUpdateData }));
     }
     if (Object.keys(driverProfileUpdateData).length > 0) {
-      updates.push(prisma.driverProfile.update({ where: { userId }, data: driverProfileUpdateData }));
+      updates.push(prisma.driverProfile.upsert({
+        where: { userId },
+        update: driverProfileUpdateData,
+        create: {
+          userId,
+          carModel: '',
+          carPlateNumber: '',
+          carColor: '',
+          vehicleType: 'PRIVATE_CAR',
+          carPhotoUrl: '',
+          ...driverProfileUpdateData,
+        },
+      }));
     }
 
     let updatedUser = null;
