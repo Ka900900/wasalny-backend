@@ -26,11 +26,13 @@ router.post('/:docType', authenticateToken, withUpload(uploadDocument));
 // ─── Legacy shorthands (backward compat) ──────────────────
 // Each maps to the canonical docType and calls the same handler.
 const LEGACY_MAP = {
-  '/profile':   { docType: 'profile' },
-  '/license':   { docType: 'license' },
-  '/id-card':   { docType: 'id-front' },
-  '/car':       { docType: 'car' },
-  '/insurance': { docType: 'insurance' },
+  '/profile':      { docType: 'profile' },
+  '/license':      { docType: 'license' },
+  '/license-back': { docType: 'license-back' },
+  '/id-card':      { docType: 'id-front' },
+  '/id-back':      { docType: 'id-back' },
+  '/car':          { docType: 'car' },
+  '/insurance':    { docType: 'insurance' },
 };
 
 for (const [legacyPath, { docType }] of Object.entries(LEGACY_MAP)) {

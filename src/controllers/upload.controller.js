@@ -10,7 +10,8 @@
  */
 const prisma = require('../config/prisma');
 const { validateFile, uploadBuffer } = require('../services/upload.service');
-const { DOCUMENT_MAP, FIELD_LABELS } = require('../config/upload-map');
+const DOCUMENT_MAP = require('../config/upload-map');
+const FIELD_LABELS = {};  // Reserved for future human-readable labels
 
 // ─── Helpers ──────────────────────────────────────────────
 
