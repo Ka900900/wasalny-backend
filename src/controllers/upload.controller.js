@@ -66,21 +66,20 @@ async function uploadDocument(req, res) {
 
     // 3. Upload to Cloudinary (memory → stream)
     const result = await uploadBuffer(req.file.buffer, docConfig.folder, {
-      public_id: `${req.user.id}_${docType}_${Date.now()}`,
+      public_id: `${req.user.userId}_${docType}_${Date.now()}`,
     });
 
     // 4. Persist URL on DriverProfile
-    const profile = await getDriverProfile(req.user.id);
+    const profile = await getDriverProfile(req.user.userId);
     if (!profile) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
     const updateData = { [docConfig.prismaField]: result.secure_url };
     await prisma.driverProfile.update({
-      where: { userId: req.user.id },
+      where: { userId: req.user.userId },
       data: updateData,
     });
-
     // 5. Respond
     return res.status(200).json({
       success: true,
