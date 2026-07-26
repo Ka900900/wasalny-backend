@@ -17,13 +17,15 @@
  */
 module.exports = {
   // ── Canonical docType keys (matching Flutter UploadDocType) ──
-  'id-front':     { prismaField: 'idPhotoFront',   folder: 'wasalny/documents' },
-  'id-back':      { prismaField: 'idPhotoBack',    folder: 'wasalny/documents' },
-  license:        { prismaField: 'licensePhoto',   folder: 'wasalny/documents' },
-  'license-back': { prismaField: 'licenseBackUrl', folder: 'wasalny/documents_back' },
-  face:           { prismaField: 'facePhoto',      folder: 'wasalny/faces' },
-  car:            { prismaField: 'carPhotoUrl',    folder: 'wasalny/car_photos' },
-  insurance:      { prismaField: 'insurancePhoto', folder: 'wasalny/documents' },
+  'id-front':              { prismaField: 'idPhotoFront',            folder: 'wasalny/documents' },
+  'id-back':               { prismaField: 'idPhotoBack',             folder: 'wasalny/documents' },
+  license:                 { prismaField: 'licensePhoto',            folder: 'wasalny/documents' },
+  'license-back':          { prismaField: 'licenseBackUrl',          folder: 'wasalny/documents_back' },
+  face:                    { prismaField: 'facePhoto',               folder: 'wasalny/faces' },
+  car:                     { prismaField: 'carPhotoUrl',             folder: 'wasalny/car_photos' },
+  insurance:               { prismaField: 'insurancePhoto',          folder: 'wasalny/documents' },
+  'vehicle-license-front': { prismaField: 'vehicleLicenseFrontUrl',  folder: 'wasalny/vehicle_licenses' },
+  'vehicle-license-back':  { prismaField: 'vehicleLicenseBackUrl',   folder: 'wasalny/vehicle_licenses' },
 
   // ── Synonym keys (backward compat, used by legacy shorthands) ──
   idPhotoFront:   { prismaField: 'idPhotoFront',   folder: 'wasalny/documents' },

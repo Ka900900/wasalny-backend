@@ -163,6 +163,10 @@ model DriverProfile {
   idCardBackPublicId   String?   // Cloudinary Public ID لصورة ظهر البطاقة
   licenseBackPublicId  String?   // Cloudinary Public ID لصورة ظهر الرخصة
 
+  // ── رخصة المركبة (السيارة / الموتوسيكل) ──
+  vehicleLicenseFrontUrl String?   // رخصة السيارة/الموتوسيكل – وجه
+  vehicleLicenseBackUrl  String?   // رخصة السيارة/الموتوسيكل – ظهر
+
   isAvailable    Boolean         @default(true)
   currentLat     Float?
   currentLng     Float?

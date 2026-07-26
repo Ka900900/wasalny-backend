@@ -224,7 +224,16 @@ app.post('/api/v1/auth/register-driver', authenticateToken, validate(registerDri
   if (req.user.role === 'DRIVER') {
     return res.status(400).json({ error: 'أنت بالفعل مسجل ككابتن' });
   }
-  const { phoneNumber, carModel, carPlateNumber, carColor, vehicleType, carPhotoUrl } = req.body;
+  const {
+    phoneNumber,
+    carModel, carPlateNumber, carColor, vehicleType, carPhotoUrl,
+    // ── حقول المستندات الاختيارية ──
+    idPhotoFront, idPhotoBack, idCardBackUrl,
+    licensePhoto, licenseBackUrl,
+    facePhoto, insurancePhoto,
+    vehicleLicenseFrontUrl, vehicleLicenseBackUrl,
+    serviceTier,
+  } = req.body;
   try {
     // نتأكد إن الرقم مش متسجل لحساب تاني
     const existing = await prisma.user.findUnique({ where: { phoneNumber } });
@@ -233,7 +242,21 @@ app.post('/api/v1/auth/register-driver', authenticateToken, validate(registerDri
     }
 
     const driverProfile = await prisma.driverProfile.create({
-      data: { userId: req.user.userId, carModel, carPlateNumber, carColor, vehicleType, carPhotoUrl },
+      data: {
+        userId: req.user.userId,
+        carModel, carPlateNumber, carColor, vehicleType, carPhotoUrl,
+        // ── حقول المستندات (كلها optional في schema) ──
+        ...(idPhotoFront           && { idPhotoFront }),
+        ...(idPhotoBack            && { idPhotoBack }),
+        ...(idCardBackUrl          && { idCardBackUrl }),
+        ...(licensePhoto           && { licensePhoto }),
+        ...(licenseBackUrl         && { licenseBackUrl }),
+        ...(facePhoto              && { facePhoto }),
+        ...(insurancePhoto         && { insurancePhoto }),
+        ...(vehicleLicenseFrontUrl && { vehicleLicenseFrontUrl }),
+        ...(vehicleLicenseBackUrl  && { vehicleLicenseBackUrl }),
+        ...(serviceTier            && { serviceTier }),
+      },
     });
     await prisma.user.update({
       where: { id: req.user.userId },

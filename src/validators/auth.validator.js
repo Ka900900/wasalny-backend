@@ -34,6 +34,18 @@ const registerDriverSchema = {
         'string.pattern.base': 'رابط صورة السيارة يجب أن يبدأ بـ https://',
         'any.required': 'رابط صورة السيارة مطلوب',
       }),
+
+    // ── حقول المستندات الاختيارية (الفلاتر بتبعتها) ──
+    idPhotoFront:           Joi.string().uri().optional(),
+    idPhotoBack:            Joi.string().uri().optional(),
+    idCardBackUrl:          Joi.string().uri().optional(),
+    licensePhoto:           Joi.string().uri().optional(),
+    licenseBackUrl:         Joi.string().uri().optional(),
+    facePhoto:              Joi.string().uri().optional(),
+    insurancePhoto:         Joi.string().uri().optional(),
+    vehicleLicenseFrontUrl: Joi.string().uri().optional(),
+    vehicleLicenseBackUrl:  Joi.string().uri().optional(),
+    serviceTier:            Joi.string().valid('ECO', 'COMFORT', 'PREMIUM').optional(),
   }),
 };
 
