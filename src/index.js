@@ -244,9 +244,30 @@ app.post('/api/v1/auth/register-driver', authenticateToken, validate(registerDri
       return res.status(409).json({ error: 'رقم الهاتف مسجل بالفعل لحساب آخر' });
     }
 
-    const driverProfile = await prisma.driverProfile.create({
-      data: {
+    const driverProfile = await prisma.driverProfile.upsert({
+      where: { userId: req.user.userId },
+      create: {
         userId: req.user.userId,
+        carModel, carPlateNumber, carColor, vehicleType, carPhotoUrl,
+        // ── حقول المستندات (كلها optional في schema) ──
+        ...(idPhotoFront           && { idPhotoFront }),
+        ...(idPhotoBack            && { idPhotoBack }),
+        ...(idCardBackUrl          && { idCardBackUrl }),
+        ...(licensePhoto           && { licensePhoto }),
+        ...(licenseBackUrl         && { licenseBackUrl }),
+        ...(facePhoto              && { facePhoto }),
+        ...(insurancePhoto         && { insurancePhoto }),
+        ...(vehicleLicenseFrontUrl && { vehicleLicenseFrontUrl }),
+        ...(vehicleLicenseBackUrl  && { vehicleLicenseBackUrl }),
+        // ── حقول إضافية مع تعيين أسماء الفلاتر → أسماء schema ──
+        ...(idCardUrl              && { idPhotoFront: idCardUrl }),
+        ...(licenseUrl             && { licensePhoto: licenseUrl }),
+        ...(licenseNumber          && { licenseNumber }),
+        ...(criminalRecordUrl      && { criminalRecordUrl }),
+        ...(drugTestUrl            && { drugTestUrl }),
+        ...(serviceTier            && { serviceTier }),
+      },
+      update: {
         carModel, carPlateNumber, carColor, vehicleType, carPhotoUrl,
         // ── حقول المستندات (كلها optional في schema) ──
         ...(idPhotoFront           && { idPhotoFront }),
@@ -283,9 +304,14 @@ app.post('/api/v1/auth/register-driver', authenticateToken, validate(registerDri
   } catch (error) {
     console.error('[register-driver] ERROR details:', error?.message || error);
     console.error('[register-driver] user role at failure =', req.user?.role);
-    // التعامل مع خطأ unique constraint على رقم الهاتف
+    // التعامل مع أخطاء unique constraint
     if (error.code === 'P2002') {
-      return res.status(409).json({ error: 'رقم الهاتف مسجل بالفعل' });
+      const target = error.meta?.target;
+      if (Array.isArray(target) && target.includes('phoneNumber')) {
+        return res.status(409).json({ error: 'رقم الهاتف مسجل بحساب آخر' });
+      }
+      const fieldName = Array.isArray(target) ? target.join(', ') : 'للبيانات';
+      return res.status(409).json({ error: `هذا الحقل مسجل بالفعل: ${fieldName}` });
     }
     res.status(500).json({ error: 'حدث خطأ أثناء التسجيل ككابتن' });
   }
