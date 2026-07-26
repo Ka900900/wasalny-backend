@@ -5,8 +5,8 @@ const { createKashierSession, queryKashierTransaction } = require('../services/k
 
 async function getRideOptionsHandler(req, res) {
   try {
-    const options = await getRideOptions();
-    res.json({ options });
+    const result = await getRideOptions();
+    res.json(result);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'خطأ في جلب خيارات الرحلات' });

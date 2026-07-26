@@ -66,23 +66,24 @@ async function main() {
         multiplier: 1.2,
         isActive: true,
       },
-      {
-        name: 'motorcycle',
-        nameAr: 'موتوسيكل',
-        description: 'Motorcycle ride',
-        descriptionAr: 'رحلة موتوسيكل',
-        icon: 'motorcycle',
-        capacity: 2,
-        serviceTier: null,
-        baseFare: 5,
-        pricePerKm: 2,
-        pricePerMinute: 0.375,
-        multiplier: 1.0,
-        isActive: true,
-      },
     ];
+    // ── Motorcycle: خيار منفصل (نوع مركبة مستقل، ليس فئة سيارة) ──
+    const motorcycleOption = {
+      name: 'motorcycle',
+      nameAr: 'موتوسيكل',
+      description: 'Motorcycle ride',
+      descriptionAr: 'رحلة موتوسيكل',
+      icon: 'motorcycle',
+      capacity: 2,
+      serviceTier: null,
+      baseFare: 5,
+      pricePerKm: 2,
+      pricePerMinute: 0.375,
+      multiplier: 1.0,
+      isActive: true,
+    };
 
-    for (const opt of options) {
+    for (const opt of [...options, motorcycleOption]) {
       await prisma.rideOption.create({ data: opt });
       console.log(`  ✅ Created ride option: ${opt.name}`);
     }

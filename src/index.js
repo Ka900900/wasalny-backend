@@ -464,20 +464,24 @@ app.get('/api/v1/rides/options', async (req, res) => {
 
     // Seed default options if none exist
     if (options.length === 0) {
-      const defaultOptions = [
+      const _CAR_DEFAULTS = [
         { name: 'economy', nameAr: 'اقتصادي', description: 'Cheapest option', descriptionAr: 'الخيار الأرخص', icon: 'economy', capacity: 4, baseFare: 10, pricePerKm: 4, pricePerMinute: 0.75, multiplier: 1.0 },
         { name: 'comfort', nameAr: 'مريح', description: 'Comfortable ride', descriptionAr: 'رحلة مريحة', icon: 'comfort', capacity: 4, baseFare: 15, pricePerKm: 6, pricePerMinute: 1.0, multiplier: 1.0 },
         { name: 'premium', nameAr: 'ممتاز', description: 'Luxury vehicles', descriptionAr: 'سيارات فاخرة', icon: 'premium', capacity: 4, baseFare: 25, pricePerKm: 10, pricePerMinute: 1.5, multiplier: 1.5 },
         { name: 'xl', nameAr: 'عائلي', description: 'Family vehicles', descriptionAr: 'سيارات عائلية', icon: 'xl', capacity: 6, baseFare: 20, pricePerKm: 8, pricePerMinute: 1.25, multiplier: 1.2 },
-        { name: 'motorcycle', nameAr: 'موتوسيكل', description: 'Motorcycle ride', descriptionAr: 'رحلة موتوسيكل', icon: 'motorcycle', capacity: 2, baseFare: 5, pricePerKm: 2, pricePerMinute: 0.375, multiplier: 1.0 },
       ];
-      for (const opt of defaultOptions) {
+      const _MOTORCYCLE_DEFAULT = { name: 'motorcycle', nameAr: 'موتوسيكل', description: 'Motorcycle ride', descriptionAr: 'رحلة موتوسيكل', icon: 'motorcycle', capacity: 2, baseFare: 5, pricePerKm: 2, pricePerMinute: 0.375, multiplier: 1.0 };
+      for (const opt of [..._CAR_DEFAULTS, _MOTORCYCLE_DEFAULT]) {
         await prisma.rideOption.create({ data: { ...opt, isActive: true } });
       }
       options = await prisma.rideOption.findMany({ where: { isActive: true } });
     }
 
-    res.json({ options });
+    const _CAR_NAMES = ['economy', 'comfort', 'premium', 'xl'];
+    const carOptions = options.filter(o => _CAR_NAMES.includes(o.name));
+    const motorcycleOption = options.find(o => o.name === 'motorcycle') || null;
+
+    res.json({ carOptions, motorcycleOption });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'خطأ في جلب خيارات الرحلات' });
@@ -561,7 +565,7 @@ app.get('/api/v1/rides/fare', async (req, res) => {
       finalPrice,
       commission,
       driverEarning: parseFloat((finalPrice - commission).toFixed(2)),
-      isPeakHour: getPricePerKm() > 7,
+      isPeakHour: getPricePerKm(rideType) > 7,
     });
   } catch (error) {
     console.error(error);
