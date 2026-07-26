@@ -165,7 +165,74 @@ async function registerFcmToken(req, res, next) {
   }
 }
 
+// ── تحديث رقم الهاتف ──
+async function updatePhoneNumber(req, res, next) {
+  try {
+    const userId = req.user?.userId || req.user?.id;
+    const { phoneNumber } = req.body;
+
+    // 1️⃣ التحقق من وجود الرقم
+    if (!phoneNumber || typeof phoneNumber !== "string") {
+      return res.status(400).json({
+        success: false,
+        message: "رقم الهاتف مطلوب",
+      });
+    }
+
+    // 2️⃣ تنظيف الرقم
+    const cleaned = phoneNumber.trim();
+
+    // 3️⃣ التحقق من الصيغة: 8-15 رقم، ممكن + في الأول
+    const phoneRegex = /^\+?\d{8,15}$/;
+    if (!phoneRegex.test(cleaned)) {
+      return res.status(400).json({
+        success: false,
+        message: "صيغة رقم الهاتف غير صحيحة (8-15 رقم، أرقام فقط)"
+      });
+    }
+
+    // 4️⃣ رفض الـ placeholder الخاص بـ Firebase
+    if (cleaned.startsWith("firebase:")) {
+      return res.status(400).json({
+        success: false,
+        message: "رقم الهاتف هذا غير صالح"
+      });
+    }
+
+    // 5️⃣ تنفيذ التحديث عبر الـ service
+    const updatedUser = await authService.updatePhoneNumber(userId, cleaned);
+
+    return res.json({
+      success: true,
+      message: "تم تحديث رقم الهاتف بنجاح",
+      user: updatedUser,
+    });
+  } catch (error) {
+    // 6️⃣ التقاط خطأ Prisma unique constraint (P2002)
+    if (error.code === "P2002") {
+      const target = error.meta?.target;
+      if (Array.isArray(target) && target.includes("phoneNumber")) {
+        return res.status(409).json({
+          success: false,
+          message: "رقم الهاتف مستخدم بالفعل من حساب آخر"
+        });
+      }
+      return res.status(409).json({
+        success: false,
+        message: "القيمة المدخلة مستخدمة بالفعل من حساب آخر"
+      });
+    }
+
+    console.error("❌ updatePhoneNumber error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "خطأ في تحديث رقم الهاتف",
+    });
+  }
+}
+
 module.exports = {
   login,
   registerFcmToken,
+  updatePhoneNumber,
 };

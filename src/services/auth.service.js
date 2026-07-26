@@ -38,6 +38,26 @@ async function login(idToken) {
   };
 }
 
+// ── تحديث رقم الهاتف ──
+async function updatePhoneNumber(userId, phoneNumber) {
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: { phoneNumber },
+    select: {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true,
+      phoneNumber: true,
+      role: true,
+      avatarUrl: true,
+      isActive: true,
+    },
+  });
+  return updated;
+}
+
 module.exports = {
   login,
+  updatePhoneNumber,
 };
