@@ -8,6 +8,9 @@ const {
   approveWithdrawalHandler,
   rejectWithdrawalHandler,
   completeWithdrawalHandler,
+  listPendingCaptainsHandler,
+  approveCaptainHandler,
+  rejectCaptainHandler,
 } = require('../controllers/admin.controller');
 const {
   listConversationsHandler,
@@ -25,5 +28,12 @@ router.patch('/withdrawals/:id/complete', authenticateToken, requireRole('ADMIN'
 router.get('/support/conversations', authenticateToken, requireRole('ADMIN'), listConversationsHandler);
 router.get('/support/messages/:userId', authenticateToken, requireRole('ADMIN'), getAdminUserMessagesHandler);
 router.post('/support/messages/:userId', authenticateToken, requireRole('ADMIN'), createAdminMessageHandler);
+
+// ═══════════════════════════════════════════════════════
+//  مسارات توثيق الكباتن (Captain Verification)
+// ═══════════════════════════════════════════════════════
+router.get('/captains/pending', authenticateToken, requireRole('ADMIN'), listPendingCaptainsHandler);
+router.post('/captains/:userId/approve', authenticateToken, requireRole('ADMIN'), approveCaptainHandler);
+router.post('/captains/:userId/reject', authenticateToken, requireRole('ADMIN'), rejectCaptainHandler);
 
 module.exports = router;

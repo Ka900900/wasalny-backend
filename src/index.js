@@ -266,6 +266,8 @@ app.post('/api/v1/auth/register-driver', authenticateToken, validate(registerDri
         ...(criminalRecordUrl      && { criminalRecordUrl }),
         ...(drugTestUrl            && { drugTestUrl }),
         ...(serviceTier            && { serviceTier }),
+        // ── Captain verification: new registrations start as PENDING ──
+        verificationStatus: 'PENDING',
       },
       update: {
         carModel, carPlateNumber, carColor, vehicleType, carPhotoUrl,
@@ -286,6 +288,8 @@ app.post('/api/v1/auth/register-driver', authenticateToken, validate(registerDri
         ...(criminalRecordUrl      && { criminalRecordUrl }),
         ...(drugTestUrl            && { drugTestUrl }),
         ...(serviceTier            && { serviceTier }),
+        // ── Captain verification: any re-submission resets to PENDING ──
+        verificationStatus: 'PENDING',
       },
     });
     await prisma.user.update({

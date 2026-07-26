@@ -139,6 +139,12 @@ model SupportMessage {
   @@index([ticketId])
 }
 
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 model DriverProfile {
   id             String          @id @default(cuid())
   userId         String          @unique
@@ -171,6 +177,10 @@ model DriverProfile {
   licenseNumber    String?   // رقم رخصة القيادة
   criminalRecordUrl String?  // صحيفة الحالة الجنائية
   drugTestUrl      String?   // تحليل المخدرات
+
+  // ── Captain verification (admin approval) ──
+  verificationStatus VerificationStatus @default(PENDING)
+  rejectionReason    String?
 
   isAvailable    Boolean         @default(true)
   currentLat     Float?
