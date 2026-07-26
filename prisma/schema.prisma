@@ -167,6 +167,11 @@ model DriverProfile {
   vehicleLicenseFrontUrl String?   // رخصة السيارة/الموتوسيكل – وجه
   vehicleLicenseBackUrl  String?   // رخصة السيارة/الموتوسيكل – ظهر
 
+  // ── مستندات إضافية ──
+  licenseNumber    String?   // رقم رخصة القيادة
+  criminalRecordUrl String?  // صحيفة الحالة الجنائية
+  drugTestUrl      String?   // تحليل المخدرات
+
   isAvailable    Boolean         @default(true)
   currentLat     Float?
   currentLng     Float?

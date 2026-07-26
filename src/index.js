@@ -232,6 +232,9 @@ app.post('/api/v1/auth/register-driver', authenticateToken, validate(registerDri
     licensePhoto, licenseBackUrl,
     facePhoto, insurancePhoto,
     vehicleLicenseFrontUrl, vehicleLicenseBackUrl,
+    // ── حقول إضافية من الفلاتر ──
+    idCardUrl, licenseUrl,
+    licenseNumber, criminalRecordUrl, drugTestUrl,
     serviceTier,
   } = req.body;
   try {
@@ -255,6 +258,12 @@ app.post('/api/v1/auth/register-driver', authenticateToken, validate(registerDri
         ...(insurancePhoto         && { insurancePhoto }),
         ...(vehicleLicenseFrontUrl && { vehicleLicenseFrontUrl }),
         ...(vehicleLicenseBackUrl  && { vehicleLicenseBackUrl }),
+        // ── حقول إضافية مع تعيين أسماء الفلاتر → أسماء schema ──
+        ...(idCardUrl              && { idPhotoFront: idCardUrl }),
+        ...(licenseUrl             && { licensePhoto: licenseUrl }),
+        ...(licenseNumber          && { licenseNumber }),
+        ...(criminalRecordUrl      && { criminalRecordUrl }),
+        ...(drugTestUrl            && { drugTestUrl }),
         ...(serviceTier            && { serviceTier }),
       },
     });
