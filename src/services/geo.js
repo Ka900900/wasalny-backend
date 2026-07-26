@@ -19,10 +19,14 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
 
 /**
  * Price per km based on peak/off-peak hours.
+ * @param {string} [rideOptionName] - If 'motorcycle', applies half pricing.
  */
-function getPricePerKm() {
+function getPricePerKm(rideOptionName) {
   const hour = new Date().getHours();
   const isPeakHour = (hour >= 7 && hour <= 9) || (hour >= 16 && hour <= 19);
+  if (rideOptionName === 'motorcycle') {
+    return isPeakHour ? 6.5 : 3.5;
+  }
   return isPeakHour ? 13 : 7;
 }
 

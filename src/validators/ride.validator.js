@@ -3,7 +3,7 @@ const Joi = require('joi');
 const requestRideSchema = {
   body: Joi.object({
     rideType: Joi.string()
-      .valid('economy', 'comfort', 'premium', 'xl')
+      .valid('economy', 'comfort', 'premium', 'xl', 'motorcycle')
       .optional(),
     pickupAddress: Joi.string().max(500).optional(),
     destinationAddress: Joi.string().max(500).optional(),

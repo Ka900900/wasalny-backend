@@ -449,7 +449,7 @@ app.post('/api/v1/auth/firebase-login', validate(firebaseLoginSchema), async (re
  * @swagger
  * /api/v1/rides/options:
  *   get:
- *     summary: Get available ride options (economy, comfort, premium, xl)
+ *     summary: Get available ride options (economy, comfort, premium, xl, motorcycle)
  *     tags: [Rides]
  *     responses:
  *       200:
@@ -469,6 +469,7 @@ app.get('/api/v1/rides/options', async (req, res) => {
         { name: 'comfort', nameAr: 'مريح', description: 'Comfortable ride', descriptionAr: 'رحلة مريحة', icon: 'comfort', capacity: 4, baseFare: 15, pricePerKm: 6, pricePerMinute: 1.0, multiplier: 1.0 },
         { name: 'premium', nameAr: 'ممتاز', description: 'Luxury vehicles', descriptionAr: 'سيارات فاخرة', icon: 'premium', capacity: 4, baseFare: 25, pricePerKm: 10, pricePerMinute: 1.5, multiplier: 1.5 },
         { name: 'xl', nameAr: 'عائلي', description: 'Family vehicles', descriptionAr: 'سيارات عائلية', icon: 'xl', capacity: 6, baseFare: 20, pricePerKm: 8, pricePerMinute: 1.25, multiplier: 1.2 },
+        { name: 'motorcycle', nameAr: 'موتوسيكل', description: 'Motorcycle ride', descriptionAr: 'رحلة موتوسيكل', icon: 'motorcycle', capacity: 2, baseFare: 5, pricePerKm: 2, pricePerMinute: 0.375, multiplier: 1.0 },
       ];
       for (const opt of defaultOptions) {
         await prisma.rideOption.create({ data: { ...opt, isActive: true } });
@@ -508,7 +509,7 @@ app.get('/api/v1/rides/options', async (req, res) => {
  *         required: true
  *       - in: query
  *         name: rideType
- *         schema: { type: string, enum: [economy, comfort, premium, xl] }
+ *         schema: { type: string, enum: [economy, comfort, premium, xl, motorcycle] }
  *     responses:
  *       200:
  *         description: Fare estimation
@@ -544,7 +545,7 @@ app.get('/api/v1/rides/fare', async (req, res) => {
       distanceKm,
       durationMinutes: durationMin,
       baseFare: rideOption?.baseFare ? parseFloat(rideOption.baseFare.toString()) : 0,
-      pricePerKm: getPricePerKm(),
+      pricePerKm: getPricePerKm(rideType),
       pricePerMinute: rideOption?.pricePerMinute ? parseFloat(rideOption.pricePerMinute.toString()) : 0,
       commissionRate,
     });
@@ -589,7 +590,7 @@ app.get('/api/v1/rides/fare', async (req, res) => {
  *               originLng: { type: number }
  *               destLat: { type: number }
  *               destLng: { type: number }
- *               rideType: { type: string, enum: [economy, comfort, premium, xl] }
+ *               rideType: { type: string, enum: [economy, comfort, premium, xl, motorcycle] }
  *               paymentMethod: { type: string, enum: [cash, wallet, card] }
  *     responses:
  *       201:
@@ -619,7 +620,7 @@ app.post('/api/v1/rides/request', authenticateToken, validate(requestRideSchema)
       distanceKm,
       durationMinutes: durationMin,
       baseFare: rideOption?.baseFare ? parseFloat(rideOption.baseFare.toString()) : 0,
-      pricePerKm: getPricePerKm(),
+      pricePerKm: getPricePerKm(rideTypeName),
       pricePerMinute: rideOption?.pricePerMinute ? parseFloat(rideOption.pricePerMinute.toString()) : 0,
       commissionRate,
     });
