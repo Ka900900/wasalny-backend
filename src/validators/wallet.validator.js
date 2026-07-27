@@ -17,16 +17,50 @@ const withdrawSchema = {
         'number.min': 'المبلغ أقل من الحد الأدنى المسموح به للسحب',
         'number.max': 'المبلغ يتجاوز الحد الأقصى المسموح به للسحب',
       }),
-    bankName: Joi.string().min(2).max(100).required().messages({
-      'any.required': 'اسم البنك مطلوب',
+    withdrawMethod: Joi.string()
+      .valid('BANK', 'INSTAPAY')
+      .optional()
+      .default('BANK')
+      .messages({
+        'any.only': 'طريقة السحب يجب أن تكون BANK أو INSTAPAY',
+      }),
+    // ── الحقول الخاصة بالتحويل البنكي ──
+    bankName: Joi.string().min(2).max(100).messages({
+      'string.min': 'اسم البنك يجب أن يكون على الأقل حرفين',
+      'string.max': 'اسم البنك يجب أن لا يتجاوز 100 حرف',
     }),
-    bankAccount: Joi.string().min(5).max(50).required().messages({
-      'any.required': 'رقم الحساب مطلوب',
+    bankAccount: Joi.string().min(5).max(50).messages({
+      'string.min': 'رقم الحساب يجب أن يكون على الأقل 5 أرقام',
+      'string.max': 'رقم الحساب يجب أن لا يتجاوز 50 حرفاً',
     }),
-    accountHolder: Joi.string().min(2).max(100).required().messages({
-      'any.required': 'اسم صاحب الحساب مطلوب',
+    accountHolder: Joi.string().min(2).max(100).messages({
+      'string.min': 'اسم صاحب الحساب يجب أن يكون على الأقل حرفين',
+      'string.max': 'اسم صاحب الحساب يجب أن لا يتجاوز 100 حرف',
     }),
-  }),
+    // ── الحقل الخاص بـ InstaPay ──
+    instapayId: Joi.string()
+      .min(3)
+      .max(100)
+      .pattern(/@/)
+      .messages({
+        'string.min': 'معرف InstaPay يجب أن لا يقل عن 3 أحرف',
+        'string.max': 'معرف InstaPay يجب أن لا يتجاوز 100 حرف',
+        'string.pattern.base': 'معرف InstaPay يجب أن يحتوي على @ (مثال: user@instapay)',
+      }),
+  })
+    .custom((value, helpers) => {
+      if (value.withdrawMethod === 'BANK') {
+        if (!value.bankName) return helpers.message('اسم البنك مطلوب للتحويل البنكي');
+        if (!value.bankAccount) return helpers.message('رقم الحساب مطلوب للتحويل البنكي');
+        if (!value.accountHolder) return helpers.message('اسم صاحب الحساب مطلوب للتحويل البنكي');
+      } else if (value.withdrawMethod === 'INSTAPAY') {
+        if (!value.instapayId) return helpers.message('معرف InstaPay مطلوب');
+      }
+      return value;
+    })
+    .messages({
+      'custom': 'بيانات غير مكتملة حسب طريقة السحب المختارة',
+    }),
 };
 
 const topUpSchema = {

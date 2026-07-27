@@ -30,8 +30,9 @@ async function getTransactions(userId) {
   return prisma.walletTransaction.findMany({ where: { walletId: wallet.id }, orderBy: { createdAt: 'desc' }, take: 50 });
 }
 
-async function requestWithdrawal(userId, { amount, bankName, bankAccount, accountHolder }) {
+async function requestWithdrawal(userId, { amount, withdrawMethod, bankName, bankAccount, accountHolder, instapayId }) {
   const amt = new Prisma.Decimal(amount);
+  const method = withdrawMethod || 'BANK';
 
   return prisma.$transaction(async (tx) => {
     // ضمان وجود المحفظة (إنشاؤها تلقائياً برصيد 0) لحل مشكلة الـ 404
@@ -42,8 +43,25 @@ async function requestWithdrawal(userId, { amount, bankName, bankAccount, accoun
       throw new Error('الرصيد المتاح غير كافٍ لطلب السحب');
     }
 
+    // بناء وصف المعاملة حسب طريقة السحب
+    let description;
+    if (method === 'INSTAPAY') {
+      description = `طلب سحب ${amt.toString()} ج.م - InstaPay (${instapayId})`;
+    } else {
+      description = `طلب سحب ${amt.toString()} ج.م - ${bankName || ''}`;
+    }
+
     const withdraw = await tx.withdrawRequest.create({
-      data: { walletId: wallet.id, amount: amt, bankName, bankAccount, accountHolder, status: 'PENDING' },
+      data: {
+        walletId: wallet.id,
+        amount: amt,
+        withdrawMethod: method,
+        bankName: method === 'BANK' ? bankName : null,
+        bankAccount: method === 'BANK' ? bankAccount : null,
+        accountHolder: method === 'BANK' ? accountHolder : null,
+        instapayId: method === 'INSTAPAY' ? instapayId : null,
+        status: 'PENDING',
+      },
     });
 
     const newReserved = wallet.reservedAmount.plus(amt);
@@ -58,9 +76,9 @@ async function requestWithdrawal(userId, { amount, bankName, bankAccount, accoun
         type: 'WITHDRAWAL',
         amount: amt,
         balanceAfter: wallet.balance, // الرصيد الكلي لم يتغير (محجوز فقط)
-        description: `طلب سحب ${amt.toString()} ج.م - ${bankName}`,
+        description,
         status: 'HELD',
-        metadata: { withdrawRequestId: withdraw.id },
+        metadata: { withdrawRequestId: withdraw.id, withdrawMethod: method },
       },
     });
 
@@ -189,4 +207,66 @@ async function completeWithdrawal(id) {
   });
 }
 
-module.exports = { ensureWallet, getWalletBalance, getTransactions, requestWithdrawal, getWithdraws, topUpWallet, listWithdrawals, approveWithdrawal, rejectWithdrawal, completeWithdrawal };
+// ── Payment Methods CRUD ──────────────────────────────
+
+async function listPaymentMethods(userId) {
+  const wallet = await prisma.wallet.findUnique({ where: { userId } });
+  if (!wallet) return [];
+  return prisma.paymentMethod.findMany({ where: { walletId: wallet.id }, orderBy: { createdAt: 'desc' } });
+}
+
+async function addPaymentMethod(userId, { type, label, accountNumber, bankName }) {
+  const wallet = await ensureWallet(userId);
+
+  // إذا كانت أول طريقة دفع → اجعلها افتراضية تلقائياً
+  const existingCount = await prisma.paymentMethod.count({ where: { walletId: wallet.id } });
+  const isDefault = existingCount === 0;
+
+  return prisma.paymentMethod.create({
+    data: {
+      walletId: wallet.id,
+      type,
+      label: label || null,
+      accountNumber: accountNumber || null,
+      bankName: bankName || null,
+      isDefault,
+    },
+  });
+}
+
+async function deletePaymentMethod(userId, methodId) {
+  const wallet = await ensureWallet(userId);
+  const method = await prisma.paymentMethod.findFirst({
+    where: { id: methodId, walletId: wallet.id },
+  });
+  if (!method) throw new Error('طريقة الدفع غير موجودة');
+  await prisma.paymentMethod.delete({ where: { id: methodId } });
+  return { message: 'تم حذف طريقة الدفع' };
+}
+
+async function setDefaultPaymentMethod(userId, methodId) {
+  const wallet = await ensureWallet(userId);
+  const method = await prisma.paymentMethod.findFirst({
+    where: { id: methodId, walletId: wallet.id },
+  });
+  if (!method) throw new Error('طريقة الدفع غير موجودة');
+
+  return prisma.$transaction(async (tx) => {
+    // إلغاء الافتراضي من جميع الطرق
+    await tx.paymentMethod.updateMany({
+      where: { walletId: wallet.id },
+      data: { isDefault: false },
+    });
+    // تعيين الطريقة المطلوبة كافتراضية
+    return tx.paymentMethod.update({
+      where: { id: methodId },
+      data: { isDefault: true },
+    });
+  });
+}
+
+module.exports = {
+  ensureWallet, getWalletBalance, getTransactions, requestWithdrawal, getWithdraws, topUpWallet,
+  listWithdrawals, approveWithdrawal, rejectWithdrawal, completeWithdrawal,
+  listPaymentMethods, addPaymentMethod, deletePaymentMethod, setDefaultPaymentMethod,
+};

@@ -71,14 +71,15 @@ const CAR_DEFAULTS = [
   { name: 'premium', nameAr: 'ممتاز', description: 'Luxury vehicles', descriptionAr: 'سيارات فاخرة', icon: 'premium', capacity: 4, baseFare: 25, pricePerKm: 10, pricePerMinute: 1.5, multiplier: 1.5 },
   { name: 'xl', nameAr: 'عائلي', description: 'Family vehicles', descriptionAr: 'سيارات عائلية', icon: 'xl', capacity: 6, baseFare: 20, pricePerKm: 8, pricePerMinute: 1.25, multiplier: 1.2 },
 ];
-const MOTORCYCLE_DEFAULT = { name: 'motorcycle', nameAr: 'موتوسيكل', description: 'Motorcycle ride', descriptionAr: 'رحلة موتوسيكل', icon: 'motorcycle', capacity: 2, baseFare: 5, pricePerKm: 2, pricePerMinute: 0.375, multiplier: 1.0 };
+const MOTORCYCLE_DEFAULT = { name: 'motorcycle', nameAr: 'موتوسيكل', description: 'Motorcycle ride', descriptionAr: 'رحلة موتوسيكل', icon: 'motorcycle', capacity: 2, baseFare: 6, pricePerKm: 2.5, pricePerMinute: 0.375, multiplier: 1.0 };
+const SCOOTER_DEFAULT = { name: 'scooter', nameAr: 'سكوتر', description: 'Scooter ride', descriptionAr: 'رحلة سكوتر', icon: 'scooter', capacity: 1, baseFare: 5, pricePerKm: 2, pricePerMinute: 0.25, multiplier: 1.0 };
 
 async function getRideOptions() {
   let allOptions = await prisma.rideOption.findMany({ where: { isActive: true }, orderBy: { pricePerKm: 'asc' } });
 
   // Seed defaults if nothing exists in DB
   if (allOptions.length === 0) {
-    for (const opt of [...CAR_DEFAULTS, MOTORCYCLE_DEFAULT]) {
+    for (const opt of [...CAR_DEFAULTS, MOTORCYCLE_DEFAULT, SCOOTER_DEFAULT]) {
       await prisma.rideOption.create({ data: { ...opt, isActive: true } });
     }
     allOptions = await prisma.rideOption.findMany({ where: { isActive: true } });
@@ -86,8 +87,9 @@ async function getRideOptions() {
 
   const carOptions = allOptions.filter(o => CAR_NAMES.includes(o.name));
   const motorcycleOption = allOptions.find(o => o.name === 'motorcycle') || null;
+  const scooterOption = allOptions.find(o => o.name === 'scooter') || null;
 
-  return { carOptions, motorcycleOption };
+  return { carOptions, motorcycleOption, scooterOption };
 }
 
 async function calculateRideFare({ originLat, originLng, destLat, destLng, rideType }) {

@@ -27,6 +27,9 @@ function getPricePerKm(rideOptionName) {
   if (rideOptionName === 'motorcycle') {
     return isPeakHour ? 6.5 : 3.5;
   }
+  if (rideOptionName === 'scooter') {
+    return isPeakHour ? 5 : 2.5;
+  }
   return isPeakHour ? 13 : 7;
 }
 

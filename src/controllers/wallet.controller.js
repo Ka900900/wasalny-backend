@@ -1,4 +1,4 @@
-const { getWalletBalance, getTransactions, requestWithdrawal, getWithdraws, topUpWallet } = require('../services/wallet.service');
+const { getWalletBalance, getTransactions, requestWithdrawal, getWithdraws, topUpWallet, listPaymentMethods, addPaymentMethod, deletePaymentMethod, setDefaultPaymentMethod } = require('../services/wallet.service');
 const { createKashierSession, queryKashierTransaction, payWithWalletDirect, payWithCardDirect } = require('../services/kashier');
 const prisma = require('../config/prisma');
 
@@ -468,4 +468,47 @@ async function confirmTopUp(req, res) {
   }
 }
 
-module.exports = { getWalletBalanceHandler, getTransactionsHandler, requestWithdrawalHandler, getWithdrawsHandler, topUpWalletHandler, initiatePaymentHandler, kashierCheckoutPageHandler, kashierCallbackHandler, initiateTopUp, confirmTopUp };
+// ── Payment Methods (CRUD) ─────────────────────────────
+
+async function listPaymentMethodsHandler(req, res) {
+  try {
+    const methods = await listPaymentMethods(req.user.userId);
+    res.json({ paymentMethods: methods });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'خطأ في جلب طرق الدفع' });
+  }
+}
+
+async function addPaymentMethodHandler(req, res) {
+  try {
+    const { type, label, accountNumber, bankName } = req.body;
+    const method = await addPaymentMethod(req.user.userId, { type, label, accountNumber, bankName });
+    res.status(201).json({ message: 'تم إضافة طريقة الدفع', paymentMethod: method });
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({ error: error.message || 'خطأ في إضافة طريقة الدفع' });
+  }
+}
+
+async function deletePaymentMethodHandler(req, res) {
+  try {
+    await deletePaymentMethod(req.user.userId, req.params.id);
+    res.json({ message: 'تم حذف طريقة الدفع' });
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({ error: error.message || 'خطأ في حذف طريقة الدفع' });
+  }
+}
+
+async function setDefaultPaymentMethodHandler(req, res) {
+  try {
+    const method = await setDefaultPaymentMethod(req.user.userId, req.params.id);
+    res.json({ message: 'تم تعيين طريقة الدفع كافتراضية', paymentMethod: method });
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({ error: error.message || 'خطأ في تعيين طريقة الدفع الافتراضية' });
+  }
+}
+
+module.exports = { getWalletBalanceHandler, getTransactionsHandler, requestWithdrawalHandler, getWithdrawsHandler, topUpWalletHandler, initiatePaymentHandler, kashierCheckoutPageHandler, kashierCallbackHandler, initiateTopUp, confirmTopUp, listPaymentMethodsHandler, addPaymentMethodHandler, deletePaymentMethodHandler, setDefaultPaymentMethodHandler };

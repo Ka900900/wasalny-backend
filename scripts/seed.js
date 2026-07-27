@@ -19,7 +19,7 @@ async function main() {
         capacity: 4,
         serviceTier: 'ECO',
         baseFare: 10,
-        pricePerKm: 6,
+        pricePerKm: 4,
         pricePerMinute: 0.75,
         multiplier: 1.0,
         isActive: true,
@@ -33,7 +33,7 @@ async function main() {
         capacity: 4,
         serviceTier: 'COMFORT',
         baseFare: 15,
-        pricePerKm: 9,
+        pricePerKm: 6,
         pricePerMinute: 1.0,
         multiplier: 1.0,
         isActive: true,
@@ -47,7 +47,7 @@ async function main() {
         capacity: 4,
         serviceTier: 'PREMIUM',
         baseFare: 25,
-        pricePerKm: 12,
+        pricePerKm: 10,
         pricePerMinute: 1.5,
         multiplier: 1.5,
         isActive: true,
@@ -76,14 +76,29 @@ async function main() {
       icon: 'motorcycle',
       capacity: 2,
       serviceTier: null,
-      baseFare: 5,
-      pricePerKm: 2,
+      baseFare: 6,
+      pricePerKm: 2.5,
       pricePerMinute: 0.375,
       multiplier: 1.0,
       isActive: true,
     };
+    // ── Scooter: خيار منفصل (نوع مركبة مستقل) ──
+    const scooterOption = {
+      name: 'scooter',
+      nameAr: 'سكوتر',
+      description: 'Scooter ride',
+      descriptionAr: 'رحلة سكوتر',
+      icon: 'scooter',
+      capacity: 1,
+      serviceTier: null,
+      baseFare: 5,
+      pricePerKm: 2,
+      pricePerMinute: 0.25,
+      multiplier: 1.0,
+      isActive: true,
+    };
 
-    for (const opt of [...options, motorcycleOption]) {
+    for (const opt of [...options, motorcycleOption, scooterOption]) {
       await prisma.rideOption.create({ data: opt });
       console.log(`  ✅ Created ride option: ${opt.name}`);
     }

@@ -322,9 +322,11 @@ model WithdrawRequest {
   wallet         Wallet         @relation(fields: [walletId], references: [id], onDelete: Cascade)
   amount         Decimal        @db.Decimal(10, 2)
   status         WithdrawStatus @default(PENDING)
+  withdrawMethod String         @default("BANK")  // "BANK" أو "INSTAPAY"
   bankName       String?
   bankAccount    String?
   accountHolder  String?
+  instapayId     String?        // المعرف الموحد لـ InstaPay (مثال: user@instapay)
   rejectReason   String?
   paidAt         DateTime?
   createdAt      DateTime       @default(now())
@@ -335,7 +337,10 @@ model PaymentMethod {
   id            String   @id @default(cuid())
   walletId      String
   wallet        Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  type          String
+  type          String   // 'bank' | 'vodafone_cash' | 'instapay'
+  label         String?  // اسم وصفي لطريقة الدفع (مثال: "حساب الأهلي", "رقمي الشخصي")
+  accountNumber String?  // رقم الحساب أو المحفظة
+  bankName      String?  // اسم البنك (لـ bank فقط)
   brand         String?
   lastFour      String?
   cardholderName String?
