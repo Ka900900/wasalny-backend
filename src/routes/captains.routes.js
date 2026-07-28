@@ -14,7 +14,8 @@ const {
   getEarningsHandler, 
   getDriverRatingsHandler,
   uploadDocuments, // 👈 2. استيراد دالة رفع المستندات
-  addVehicleHandler // 👈 دالة إضافة المركبة
+  addVehicleHandler, // 👈 دالة إضافة المركبة
+  getVerificationStatusHandler, // 👈 دالة التحقق من حالة التوثيق
 } = require('../controllers/captain.controller');
 const { getRideHistoryHandler } = require('../controllers/ride.controller');
 
@@ -52,6 +53,7 @@ router.post(
   addVehicleHandler
 );
 
+router.get('/verification-status', authenticateToken, requireRole('CAPTAIN'), getVerificationStatusHandler);
 router.put('/location', authenticateToken, requireRole('CAPTAIN'), validate(updateLocationSchema), (req, res) => updateLocationHandler(req, res, req.app.locals.io));
 router.post('/toggle-availability', authenticateToken, requireRole('CAPTAIN'), validate(toggleAvailabilitySchema), (req, res) => toggleAvailabilityHandler(req, res, req.app.locals.io));
 router.get('/available-rides', authenticateToken, requireRole('CAPTAIN'), getAvailableRidesHandler);

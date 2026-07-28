@@ -11,7 +11,10 @@ const {
   listPendingCaptainsHandler,
   approveCaptainHandler,
   rejectCaptainHandler,
+  listAllCaptainsHandler,
+  getCaptainDetailsHandler,
 } = require('../controllers/admin.controller');
+const { rejectCaptainSchema } = require('../validators/admin.validator');
 const {
   listConversationsHandler,
   getAdminUserMessagesHandler,
@@ -32,8 +35,10 @@ router.post('/support/messages/:userId', authenticateToken, requireRole('ADMIN')
 // ═══════════════════════════════════════════════════════
 //  مسارات توثيق الكباتن (Captain Verification)
 // ═══════════════════════════════════════════════════════
+router.get('/captains', authenticateToken, requireRole('ADMIN'), listAllCaptainsHandler);
 router.get('/captains/pending', authenticateToken, requireRole('ADMIN'), listPendingCaptainsHandler);
+router.get('/captains/:userId', authenticateToken, requireRole('ADMIN'), getCaptainDetailsHandler);
 router.post('/captains/:userId/approve', authenticateToken, requireRole('ADMIN'), approveCaptainHandler);
-router.post('/captains/:userId/reject', authenticateToken, requireRole('ADMIN'), rejectCaptainHandler);
+router.post('/captains/:userId/reject', authenticateToken, requireRole('ADMIN'), validate(rejectCaptainSchema), rejectCaptainHandler);
 
 module.exports = router;

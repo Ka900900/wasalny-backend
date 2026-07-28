@@ -323,6 +323,13 @@ async function uploadDocuments(req, res) {
       driverProfileUpdateData.licenseBackPublicId = uploadedUrls.licenseBack.publicId;
     }
 
+    // ═══════════════════════════════════════════════════════
+    //  إعادة تعيين حالة التوثيق إلى PENDING عند رفع مستندات جديدة
+    //  ليتمكن المسؤول من مراجعتها مرة أخرى
+    // ═══════════════════════════════════════════════════════
+    driverProfileUpdateData.verificationStatus = 'PENDING';
+    driverProfileUpdateData.rejectionReason = null;
+
     // ── تنفيذ التحديثات بشكل متوازي ──
     const updates = [];
     if (Object.keys(userUpdateData).length > 0) {
@@ -364,11 +371,12 @@ async function uploadDocuments(req, res) {
 
     return res.status(200).json({
       success: true,
-      message: 'تم رفع المستندات بنجاح',
+      message: 'تم رفع المستندات بنجاح، وسيتم مراجعتها من قبل الإدارة',
       documents: Object.fromEntries(
         Object.entries(uploadedUrls).map(([k, v]) => [k, v.url])
       ),
       user: updatedUser,
+      verificationStatus: 'PENDING',
       ...(updatedProfile && { driverProfile: updatedProfile }),
     });
   } catch (error) {
@@ -377,6 +385,66 @@ async function uploadDocuments(req, res) {
       success: false,
       message: 'حدث خطأ أثناء رفع المستندات',
       details: error.message || String(error),
+    });
+  }
+}
+
+// ── Get Captain Verification Status ─────────────────
+async function getVerificationStatusHandler(req, res) {
+  try {
+    const userId = req.user.userId;
+    const profile = await prisma.driverProfile.findUnique({
+      where: { userId },
+      select: {
+        verificationStatus: true,
+        rejectionReason: true,
+        idPhotoFront: true,
+        idPhotoBack: true,
+        licensePhoto: true,
+        facePhoto: true,
+        insurancePhoto: true,
+        idCardBackUrl: true,
+        licenseBackUrl: true,
+        vehicleLicenseFrontUrl: true,
+        vehicleLicenseBackUrl: true,
+        licenseNumber: true,
+        criminalRecordUrl: true,
+        drugTestUrl: true,
+      },
+    });
+
+    if (!profile) {
+      return res.status(404).json({
+        success: false,
+        message: 'لم يتم العثور على بيانات الكابتن. يرجى رفع المستندات أولاً.',
+        verificationStatus: 'NO_PROFILE',
+      });
+    }
+
+    // حساب عدد المستندات المرفوعة
+    const documentFields = [
+      'idPhotoFront', 'idPhotoBack', 'licensePhoto', 'facePhoto',
+      'insurancePhoto', 'idCardBackUrl', 'licenseBackUrl',
+      'vehicleLicenseFrontUrl', 'vehicleLicenseBackUrl',
+      'criminalRecordUrl', 'drugTestUrl',
+    ];
+    const uploadedDocs = documentFields.filter((f) => !!profile[f]);
+
+    res.json({
+      success: true,
+      verificationStatus: profile.verificationStatus,
+      rejectionReason: profile.rejectionReason,
+      documents: {
+        totalRequired: documentFields.length,
+        uploaded: uploadedDocs.length,
+        fields: profile,
+      },
+    });
+  } catch (error) {
+    console.error('❌ getVerificationStatusHandler error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'خطأ في جلب حالة التوثيق',
     });
   }
 }
@@ -491,4 +559,5 @@ module.exports = {
   getDriverRatingsHandler,
   uploadDocuments, // 👈 ضفنا دالة الرفع هنا
   addVehicleHandler, // 👈 دالة إضافة المركبة
+  getVerificationStatusHandler, // 👈 دالة التحقق من حالة التوثيق
 };
