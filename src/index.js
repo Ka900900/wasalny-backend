@@ -29,6 +29,7 @@ const supportRoutes = require('./routes/support.routes');
 const safetyRoutes = require('./routes/safety.routes');
 const notificationsRoutes = require('./routes/notifications.routes');
 const { rateRideHandler } = require('./controllers/ride.controller');
+const { toggleAvailabilityHandler } = require('./controllers/captain.controller');
 
 // Validators
 const {
@@ -39,6 +40,7 @@ const {
   requestRideSchema,
   updateLocationSchema,
   rateRideSchema,
+  toggleAvailabilitySchema,
 } = require('./validators/ride.validator');
 const { withdrawSchema, topUpSchema } = require('./validators/wallet.validator');
 const uploadRoutes = require('./routes/upload.routes');
@@ -1176,6 +1178,30 @@ app.put('/api/v1/driver/ride/complete/:rideId', authenticateToken, requireRole('
     res.status(500).json({ error: error.message || 'خطأ في إنهاء الرحلة' });
   }
 });
+
+/**
+ * @swagger
+ * /api/v1/driver/toggle-availability:
+ *   post:
+ *     summary: Toggle driver availability (online/offline)
+ *     tags: [Driver]
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [isAvailable]
+ *             properties:
+ *               isAvailable:
+ *                 type: boolean
+ *                 description: true = online, false = offline
+ *     responses:
+ *       200:
+ *         description: Availability status updated
+ */
+app.post('/api/v1/driver/toggle-availability', authenticateToken, requireRole('DRIVER'), validate(toggleAvailabilitySchema), (req, res) => toggleAvailabilityHandler(req, res, req.app.locals.io));
 
 // NOTE: /api/v1/driver/earnings is handled in src/routes/captains.routes.js (getEarningsHandler)
 
