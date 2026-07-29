@@ -19,7 +19,16 @@ async function getProfile(userId) {
   if (!user) {
     throw new Error('المستخدم غير موجود');
   }
-  return user;
+
+  // ── جلب بيانات المركبة من جدول Vehicle (إن وجدت) ──
+  const vehicle = await prisma.vehicle.findMany({
+    where: { userId },
+  });
+
+  return {
+    ...user,
+    vehicle: vehicle.length > 0 ? vehicle[0] : null,
+  };
 }
 
 async function updateProfile(userId, { firstName, lastName, avatarUrl }) {

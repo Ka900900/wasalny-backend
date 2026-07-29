@@ -43,16 +43,24 @@ async function findCaptainsWithTokens() {
 }
 
 async function setDriverAvailability(userId, isAvailable) {
-  // البحث عن المركبة لاستخدام بياناتها الحقيقية في حال إنشاء DriverProfile
-  const vehicle = await prisma.vehicle.findFirst({ where: { userId } });
-  if (!vehicle) {
-    throw new Error('برجاء تسجيل بيانات المركبة أولاً قبل تفعيل حالة التوفر');
+  // 1. التحقق من وجود DriverProfile مسبقاً
+  const existingProfile = await prisma.driverProfile.findUnique({ where: { userId } });
+  if (existingProfile) {
+    // الـ Profile موجود → تحديث حالة التوفر فقط
+    return prisma.driverProfile.update({
+      where: { userId },
+      data: { isAvailable: !!isAvailable },
+    });
   }
 
-  return prisma.driverProfile.upsert({
-    where: { userId },
-    update: { isAvailable: !!isAvailable },
-    create: {
+  // 2. الـ Profile غير موجود → التحقق من وجود مركبة لإنشاء Profile جديد
+  const vehicle = await prisma.vehicle.findFirst({ where: { userId } });
+  if (!vehicle) {
+    throw new Error('برجاء تسجيل بيانات المركبة أولاً');
+  }
+
+  return prisma.driverProfile.create({
+    data: {
       userId,
       isAvailable: !!isAvailable,
       carModel: `${vehicle.make} ${vehicle.model}`,

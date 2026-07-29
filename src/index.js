@@ -301,6 +301,31 @@ app.post('/api/v1/auth/register-driver', authenticateToken, validate(registerDri
     // Ensure wallet exists
     await ensureWallet(req.user.userId);
 
+    // ── إنشاء/تحديث سجل المركبة في جدول Vehicle ──
+    const make = carModel?.trim()?.split(/\s+/)[0] || carModel || '';
+    const modelStr = carModel?.trim()?.split(/\s+/).slice(1).join(' ') || '';
+    await prisma.vehicle.upsert({
+      where: { plateNumber: carPlateNumber },
+      update: {
+        make,
+        model: modelStr,
+        color: carColor,
+        vehicleType: vehicleType?.toUpperCase(),
+        year: new Date().getFullYear(), // سنة تقريبية لأنها مش موجودة في الطلب
+      },
+      create: {
+        userId: req.user.userId,
+        make,
+        model: modelStr,
+        color: carColor,
+        plateNumber: carPlateNumber,
+        vehicleType: vehicleType?.toUpperCase(),
+        year: new Date().getFullYear(),
+        licenseFrontUrl: carPhotoUrl || '',
+        licenseBackUrl: '',
+      },
+    });
+
     const newToken = generateToken(req.user.userId, 'DRIVER');
     res.status(201).json({
       message: 'تم التسجيل ككابتن بنجاح',
