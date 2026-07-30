@@ -1,5 +1,32 @@
 const Joi = require('joi');
 
+const registerSchema = {
+  body: Joi.object({
+    email: Joi.string().email().required().messages({
+      'string.email': 'البريد الإلكتروني غير صحيح',
+      'any.required': 'البريد الإلكتروني مطلوب',
+    }),
+    password: Joi.string().min(6).max(128).required().messages({
+      'string.min': 'كلمة المرور يجب أن تكون 6 أحرف على الأقل',
+      'string.max': 'كلمة المرور يجب أن تكون أقل من 128 حرف',
+      'any.required': 'كلمة المرور مطلوبة',
+    }),
+    firstName: Joi.string().min(1).max(100).required().messages({
+      'any.required': 'الاسم الأول مطلوب',
+    }),
+    lastName: Joi.string().min(1).max(100).required().messages({
+      'any.required': 'الاسم الأخير مطلوب',
+    }),
+    phoneNumber: Joi.string()
+      .pattern(/^(?:\+20|0)1\d{9}$/)
+      .optional()
+      .allow('', null)
+      .messages({
+        'string.pattern.base': 'رقم الهاتف المصري غير صحيح (مثال: 01xxxxxxxxx)',
+      }),
+  }),
+};
+
 const registerDriverSchema = {
   body: Joi.object({
     phoneNumber: Joi.string()
@@ -57,4 +84,21 @@ const firebaseLoginSchema = {
   }),
 };
 
-module.exports = { registerDriverSchema, firebaseLoginSchema };
+const loginSchema = {
+  body: Joi.object({
+    email: Joi.string()
+      .email()
+      .required()
+      .messages({
+        'string.email': 'البريد الإلكتروني غير صحيح',
+        'any.required': 'البريد الإلكتروني مطلوب',
+      }),
+    password: Joi.string()
+      .required()
+      .messages({
+        'any.required': 'كلمة المرور مطلوبة',
+      }),
+  }),
+};
+
+module.exports = { registerDriverSchema, firebaseLoginSchema, registerSchema, loginSchema };

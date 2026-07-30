@@ -13,6 +13,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@google-cloud/firestore": "^8.7.0",
     "@prisma/adapter-better-sqlite3": "^7.8.0",
     "@prisma/client": "^6.16.2",
     "axios": "^1.18.0",

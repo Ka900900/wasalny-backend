@@ -200,6 +200,55 @@ app.post('/api/v1/rate', authenticateToken, validate(require('./validators/ride.
 
 /**
  * @swagger
+ * /api/v1/auth/login:
+ *   post:
+ *     summary: Login with email and password
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email, password]
+ *             properties:
+ *               email: { type: string, format: email }
+ *               password: { type: string }
+ *     responses:
+ *       200:
+ *         description: Login successful, returns JWT token
+ *       400:
+ *         description: Invalid credentials
+ */
+
+/**
+ * @swagger
+ * /api/v1/auth/register:
+ *   post:
+ *     summary: Register a new user (email + password)
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email, password, firstName, lastName]
+ *             properties:
+ *               email: { type: string, format: email }
+ *               password: { type: string, minLength: 6 }
+ *               firstName: { type: string }
+ *               lastName: { type: string }
+ *               phoneNumber: { type: string, nullable: true }
+ *     responses:
+ *       201:
+ *         description: Account created successfully
+ *       409:
+ *         description: Email already exists
+ */
+
+/**
+ * @swagger
  * /api/v1/auth/register-driver:
  *   post:
  *     summary: Register as a driver (captain)

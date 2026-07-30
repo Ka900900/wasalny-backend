@@ -5,6 +5,78 @@ const prisma = new PrismaClient();
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
+// ── تسجيل مستخدم جديد (email + password) ─────────────────
+async function register(req, res, next) {
+  try {
+    const { email, password, firstName, lastName, phoneNumber } = req.body;
+
+    // 1️⃣ التحقق من عدم وجود البريد مسبقاً
+    const cleanEmail = email.toLowerCase().trim();
+    const existing = await prisma.user.findFirst({ where: { email: cleanEmail } });
+    if (existing) {
+      return res.status(409).json({
+        success: false,
+        message: "البريد الإلكتروني مسجل بالفعل",
+      });
+    }
+
+    // 2️⃣ تشفير كلمة المرور
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    // 3️⃣ إنشاء المستخدم
+    const user = await prisma.user.create({
+      data: {
+        email: cleanEmail,
+        password: hashedPassword,
+        firstName,
+        lastName,
+        phoneNumber: phoneNumber || null,
+        role: "RIDER",
+        isActive: true,
+      },
+    });
+
+    // 4️⃣ إنشاء محفظة للمستخدم الجديد
+    try {
+      await prisma.wallet.create({
+        data: { userId: user.id, balance: 0, pendingWithdraw: 0, totalEarned: 0, totalWithdrawn: 0 },
+      });
+    } catch (walletErr) {
+      console.warn("⚠️ register: wallet creation skipped (may already exist):", walletErr.message);
+    }
+
+    // 5️⃣ إنشاء JWT token (نفس الـ payload الموجود عشان ما يتأثرش riderId)
+    const token = jwt.sign(
+      { id: user.id, userId: user.id, role: user.role },
+      process.env.JWT_SECRET || "secret_key",
+      { expiresIn: "30d" }
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: "تم إنشاء الحساب بنجاح",
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        phoneNumber: user.phoneNumber,
+        role: user.role,
+        isActive: user.isActive,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Register Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "خطأ في إنشاء الحساب",
+      errorDetails: error.message,
+    });
+  }
+}
+
 // 🔑 دالة تسجيل الدخول الشاملة
 async function login(req, res, next) {
   try {
@@ -23,14 +95,19 @@ async function login(req, res, next) {
         });
       }
 
-      if (user.password) {
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) {
-          return res.status(400).json({
-            success: false,
-            message: "البريد الإلكتروني أو كلمة المرور غير صحيحة",
-          });
-        }
+      if (!user.password) {
+        return res.status(400).json({
+          success: false,
+          message: "هذا الحساب مسجل عبر وسيلة أخرى (يرجى استخدام تسجيل الدخول عبر Firebase)",
+        });
+      }
+
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) {
+        return res.status(400).json({
+          success: false,
+          message: "البريد الإلكتروني أو كلمة المرور غير صحيحة",
+        });
       }
 
       const token = jwt.sign(
@@ -231,8 +308,11 @@ async function updatePhoneNumber(req, res, next) {
   }
 }
 
+
+
 module.exports = {
   login,
+  register,
   registerFcmToken,
   updatePhoneNumber,
 };

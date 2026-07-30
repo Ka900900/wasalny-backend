@@ -69,6 +69,7 @@ model User {
   firebaseUid  String?  @unique
   phoneNumber  String?  @unique
   email        String?
+  password     String?                               // مشفر بـ bcrypt للمستخدمين المسجلين بالإيميل
   firstName    String
   lastName     String
   role         String   @default("RIDER")
