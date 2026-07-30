@@ -5,7 +5,7 @@ const { authenticateToken } = require("../middleware/auth");
 const { validate } = require("../middleware/validate");
 const { registerSchema } = require("../validators/auth.validator");
 
-router.post("/register",validate(registerSchema), authController.register);
+router.post("/register", validate(registerSchema), authController.register);
 router.post("/login", authController.login);
 router.post("/firebase", authController.login);
 router.post("/register-fcm-token", authenticateToken, authController.registerFcmToken);
