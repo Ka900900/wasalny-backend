@@ -1,6 +1,6 @@
 const prisma = require('../config/prisma');
 const { getFirestore } = require('../config/firebase');
-const { calculateDistance, estimateDuration, calculateFare, haversineDistance, getPricePerKm } = require('./geo');
+const { calculateDistance, estimateDuration, calculateFare, haversineDistance, getPricePerKm, isPeakHourNow } = require('./geo');
 const { emitRideStatus, SocketEvents } = require('../config/socket');
 const { Prisma } = require('@prisma/client');
 const { notifyCaptainsNewRide } = require('./fcm.service');
@@ -127,7 +127,7 @@ async function calculateRideFare({ originLat, originLng, destLat, destLng, rideT
     commissionRate,
     commission,
     driverEarning: parseFloat((finalPrice - commission).toFixed(2)),
-    isPeakHour: getPricePerKm(rideType) > 7,
+    isPeakHour: isPeakHourNow(),
   };
 }
 

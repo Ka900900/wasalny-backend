@@ -16,7 +16,7 @@ const { initChatSocket } = require('./sockets/chat.socket');
 const { initSupportSocket } = require('./sockets/support.socket');
 const { createKashierSession, verifyWebhookSignature, queryKashierTransaction } = require('./services/kashier');
 const { initFirebase, verifyFirebaseToken } = require('./config/firebase');
-const { calculateDistance, calculateFare, estimateDuration, getPricePerKm, haversineDistance } = require('./services/geo');
+const { calculateDistance, calculateFare, estimateDuration, getPricePerKm, haversineDistance, isPeakHourNow } = require('./services/geo');
 const { settleRide } = require('./services/ride.service');
 const prisma = require('./config/prisma');
 const authRoutes = require('./routes/auth.routes');
@@ -643,7 +643,7 @@ app.get('/api/v1/rides/fare', async (req, res) => {
       finalPrice,
       commission,
       driverEarning: parseFloat((finalPrice - commission).toFixed(2)),
-      isPeakHour: getPricePerKm(rideType) > 7,
+      isPeakHour: isPeakHourNow(),
     });
   } catch (error) {
     console.error(error);

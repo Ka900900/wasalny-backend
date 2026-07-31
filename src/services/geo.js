@@ -18,19 +18,32 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
 }
 
 /**
+ * Check whether the current time is within peak hours.
+ * Peak hours: 7–9 AM and 4–7 PM (server local time).
+ * @param {Date} [date]
+ * @returns {boolean}
+ */
+function isPeakHourNow(date = new Date()) {
+  const hour = date.getHours();
+  return (hour >= 7 && hour <= 9) || (hour >= 16 && hour <= 19);
+}
+
+/**
  * Price per km based on peak/off-peak hours.
- * @param {string} [rideOptionName] - If 'motorcycle', applies half pricing.
+ * Cars (economy/comfort/premium/xl): 7 EGP off-peak, 15 EGP peak.
+ * Motorcycle = 50% of car price; Scooter = 1/3 of car price
+ * (both follow the same peak/off-peak logic so they stay proportional).
+ * @param {string} [rideOptionName]
  */
 function getPricePerKm(rideOptionName) {
-  const hour = new Date().getHours();
-  const isPeakHour = (hour >= 7 && hour <= 9) || (hour >= 16 && hour <= 19);
+  const carPricePerKm = isPeakHourNow() ? 15 : 7;
   if (rideOptionName === 'motorcycle') {
-    return isPeakHour ? 6.5 : 3.5;
+    return parseFloat((carPricePerKm * 0.5).toFixed(2)); // نصف سعر السيارة
   }
   if (rideOptionName === 'scooter') {
-    return isPeakHour ? 5 : 2.5;
+    return parseFloat((carPricePerKm * (1 / 3)).toFixed(2)); // ثلث سعر السيارة
   }
-  return isPeakHour ? 13 : 7;
+  return carPricePerKm;
 }
 
 /**
@@ -97,6 +110,7 @@ function estimateDuration(distanceKm, avgSpeedKmph = 30) {
 module.exports = {
   haversineDistance,
   getPricePerKm,
+  isPeakHourNow,
   calculateDistance,
   calculateFare,
   estimateDuration,

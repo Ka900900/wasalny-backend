@@ -41,7 +41,7 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
 function getPricePerKm() {
   const hour = new Date().getHours();
   const isPeakHour = (hour >= 7 && hour <= 9) || (hour >= 16 && hour <= 19);
-  return isPeakHour ? 13 : 7;
+  return isPeakHour ? 15 : 7;
 }
 
 // ميدلوير التحقق من التوكن
