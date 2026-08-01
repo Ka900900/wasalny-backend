@@ -101,4 +101,48 @@ const loginSchema = {
   }),
 };
 
-module.exports = { registerDriverSchema, firebaseLoginSchema, registerSchema, loginSchema };
+const forgotPasswordSchema = {
+  body: Joi.object({
+    email: Joi.string()
+      .email()
+      .required()
+      .messages({
+        'string.email': 'البريد الإلكتروني غير صحيح',
+        'any.required': 'البريد الإلكتروني مطلوب',
+      }),
+  }),
+};
+
+const resetPasswordSchema = {
+  body: Joi.object({
+    // نقبل `code` أو `token` (كلاهما نفس المعنى: رمز إعادة التعيين)
+    code: Joi.string().optional().allow(''),
+    token: Joi.string().optional().allow(''),
+    newPassword: Joi.string()
+      .min(6)
+      .max(128)
+      .required()
+      .messages({
+        'string.min': 'كلمة المرور يجب أن تكون 6 أحرف على الأقل',
+        'string.max': 'كلمة المرور يجب أن تكون أقل من 128 حرف',
+        'any.required': 'كلمة المرور الجديدة مطلوبة',
+      }),
+  })
+    .custom((value, helpers) => {
+      const raw = (value.code || value.token || '').trim();
+      if (!raw) {
+        return helpers.message('رمز إعادة التعيين مطلوب');
+      }
+      // توحيد الاسم إلى `code` بعد التحقق
+      return { code: raw, newPassword: value.newPassword };
+    }),
+};
+
+module.exports = {
+  registerDriverSchema,
+  firebaseLoginSchema,
+  registerSchema,
+  loginSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+};

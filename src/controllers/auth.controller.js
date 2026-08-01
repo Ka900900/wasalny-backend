@@ -308,11 +308,133 @@ async function updatePhoneNumber(req, res, next) {
   }
 }
 
+// ════════════════════════════════════════════════════════════════════════
+//  نسيت كلمة المرور / إعادة تعيينها
+// ════════════════════════════════════════════════════════════════════════
 
+// توليد رمز مكوّن من 6 أرقام (يعمل كـ reset token)
+function generateResetCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+// توصيل الرمز للمستخدم (بريد/رسالة) — حالياً يُطبع في سجل السيرفر فقط لعدم
+// وجود مزوّد بريد في المشروع. اربط هنا nodemailer / SendGrid عند التفعيل.
+function _deliverResetCode(user, code) {
+  // TODO: أرسل الرمز عبر البريد الإلكتروني (nodemailer / SendGrid) أو SMS
+  console.log(`🔑 Password reset code for ${user.email}: ${code}`);
+}
+
+// ── طلب رمز إعادة تعيين كلمة المرور ──
+async function forgotPassword(req, res, next) {
+  try {
+    const { email } = req.body;
+    const cleanEmail = email.toLowerCase().trim();
+    const user = await prisma.user.findFirst({ where: { email: cleanEmail } });
+
+    // نرجّع نجاح دائماً حتى لو لم يوجد البريد (لمنع كشف وجود الحسابات)
+    if (!user) {
+      return res.json({
+        success: true,
+        message: "إذا كان البريد مسجلاً، سيصلك رمز إعادة التعيين",
+      });
+    }
+
+    const code = generateResetCode();
+    const salt = await bcrypt.genSalt(10);
+    const hashedCode = await bcrypt.hash(code, salt);
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // صالح 15 دقيقة
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        resetPasswordToken: hashedCode,
+        resetPasswordExpiresAt: expiresAt,
+      },
+    });
+
+    _deliverResetCode(user, code);
+
+    const isProduction = process.env.NODE_ENV === "production";
+    return res.json({
+      success: true,
+      message: "تم إرسال رمز إعادة تعيين كلمة المرور إلى بريدك",
+      expiresInMinutes: 15,
+      // في بيئة التطوير فقط نرجّع الكود في الرد حتى يعمل تطبيق Flutter
+      // أثناء التطوير (لعدم وجود مزوّد بريد). في الإنتاج يُرسل بريدياً فقط.
+      ...(isProduction ? {} : { devCode: code }),
+    });
+  } catch (error) {
+    console.error("❌ forgotPassword error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "خطأ في إرسال رمز إعادة التعيين",
+      errorDetails: error.message,
+    });
+  }
+}
+
+// ── تنفيذ إعادة تعيين كلمة المرور ──
+async function resetPassword(req, res, next) {
+  try {
+    const code = (req.body.code || req.body.token || "").trim();
+    const { newPassword } = req.body;
+
+    const now = new Date();
+    const candidates = await prisma.user.findMany({
+      where: {
+        resetPasswordToken: { not: null },
+        resetPasswordExpiresAt: { gt: now },
+      },
+    });
+
+    // الرمز مخزّن مشفّراً (bcrypt)، لذا نقارن مع كل مستخدم لديه رمز ساري
+    let matched = null;
+    for (const u of candidates) {
+      const ok = await bcrypt.compare(code, u.resetPasswordToken);
+      if (ok) {
+        matched = u;
+        break;
+      }
+    }
+
+    if (!matched) {
+      return res.status(400).json({
+        success: false,
+        message: "رمز إعادة التعيين غير صحيح أو منتهي الصلاحية",
+      });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    await prisma.user.update({
+      where: { id: matched.id },
+      data: {
+        password: hashedPassword,
+        resetPasswordToken: null,
+        resetPasswordExpiresAt: null,
+      },
+    });
+
+    return res.json({
+      success: true,
+      message: "تم تحديث كلمة المرور بنجاح، يمكنك تسجيل الدخول الآن",
+    });
+  } catch (error) {
+    console.error("❌ resetPassword error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "خطأ في تحديث كلمة المرور",
+      errorDetails: error.message,
+    });
+  }
+}
 
 module.exports = {
   login,
   register,
   registerFcmToken,
   updatePhoneNumber,
+  forgotPassword,
+  resetPassword,
 };

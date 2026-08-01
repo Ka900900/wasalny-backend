@@ -31,12 +31,15 @@ async function updateFcmToken(id, fcmToken) {
 }
 
 async function findCaptainsWithTokens() {
-  // Captains who have registered an FCM token and are active.
+  // الكابتنات المتاحون فقط (online): role = DRIVER + نشط + لديه FCM token
+  // + DriverProfile.isAvailable === true (أي أن الكابتن مفتوح لاستقبال الرحلات).
+  // هذا يمنع إرسال إشعار رحلة جديدة لكابتن Offline / غير متاح.
   return prisma.user.findMany({
     where: {
       role: 'DRIVER',
       isActive: true,
       fcmToken: { not: null },
+      driverProfile: { is: { isAvailable: true } },
     },
     select: { id: true, fcmToken: true },
   });

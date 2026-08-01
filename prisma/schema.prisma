@@ -78,6 +78,9 @@ model User {
   lastLoginAt  DateTime?
   otpCode      String?
   otpExpiresAt DateTime?
+  // رمز إعادة تعيين كلمة المرور (مشفّر بـ bcrypt) + صلاحيته
+  resetPasswordToken     String?   @map("reset_password_token")
+  resetPasswordExpiresAt DateTime? @map("reset_password_expires_at")
   avatarUrl    String?
   fcmToken     String?   @map("fcm_token") // Firebase Cloud Messaging token for push notifications
   notificationPreferences Boolean? @default(true) @map("notification_preferences") // استقبال العروض والإشعارات

@@ -249,6 +249,52 @@ app.post('/api/v1/rate', authenticateToken, validate(require('./validators/ride.
 
 /**
  * @swagger
+ * /api/v1/auth/forgot-password:
+ *   post:
+ *     summary: Request a password reset code
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email]
+ *             properties:
+ *               email: { type: string, format: email }
+ *     responses:
+ *       200:
+ *         description: Reset code sent (returns `devCode` in non-production)
+ *       500:
+ *         description: Failed to send reset code
+ */
+
+/**
+ * @swagger
+ * /api/v1/auth/reset-password:
+ *   post:
+ *     summary: Reset the password using the emailed code
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [newPassword]
+ *             properties:
+ *               code: { type: string, description: 'رمز إعادة التعيين (6 أرقام)' }
+ *               token: { type: string, description: 'بديل لـ code' }
+ *               newPassword: { type: string, minLength: 6 }
+ *     responses:
+ *       200:
+ *         description: Password updated successfully
+ *       400:
+ *         description: Invalid or expired reset code
+ */
+
+/**
+ * @swagger
  * /api/v1/auth/register-driver:
  *   post:
  *     summary: Register as a driver (captain)

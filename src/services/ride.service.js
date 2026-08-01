@@ -191,16 +191,22 @@ async function requestRide(userId, data, io) {
     },
   });
 
+  // ── جلب بيانات الراكب (تُستخدم في Firestore mirror + Socket + FCM) ──
+  const rider = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { firstName: true, lastName: true, phoneNumber: true },
+  });
+  const riderName = rider ? [rider.firstName, rider.lastName].filter(Boolean).join(' ') : '';
+  const riderPhone = rider?.phoneNumber || '';
+  const distanceKmNum = Number(newRide.distance) || 0;
+  const distanceText = `${distanceKmNum.toFixed(1)} كم`;
+
   // ── كتابة Mirror في Firestore كـ Real-time Trigger للكابتن ──
   try {
-    const rider = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { firstName: true, lastName: true },
-    });
     const db = getFirestore();
     await db.collection('rides').doc(newRide.id).set({
       riderId: userId,
-      riderName: rider ? `${rider.firstName} ${rider.lastName}` : '',
+      riderName,
       pickupAddress: newRide.pickupAddress || newRide.pickupPoint,
       destinationAddress: newRide.destinationAddress || newRide.dropoffPoint,
       pickupLat: newRide.originLat,
@@ -208,6 +214,8 @@ async function requestRide(userId, data, io) {
       destinationLat: newRide.destLat,
       destinationLng: newRide.destLng,
       fare: Number(newRide.price),
+      distance: distanceKmNum,
+      distanceText,
       vehicleType: newRide.rideType,
       status: 'pending',
       createdAt: newRide.createdAt,
@@ -217,21 +225,33 @@ async function requestRide(userId, data, io) {
     console.error('⚠️ Failed to mirror ride to Firestore (non-fatal):', fsError.message);
   }
 
+  // ── إثراء حدث Socket `ride.new_available` للكابتنات المتصلين ──
+  // يشمل اسم العميل + هاتفه + السعر (fare/price) + المسافة (رقم + نص)
+  // + العناوين + الإحداثيات + نوع المركبة + حالة الرحلة.
   io.to('drivers').emit(SocketEvents.NEW_RIDE_AVAILABLE, {
+    id: newRide.id,
     rideId: newRide.id,
+    riderId: userId,
+    riderName,
+    riderPhone,
     pickupAddress: newRide.pickupAddress || newRide.pickupPoint,
     destinationAddress: newRide.destinationAddress || newRide.dropoffPoint,
     originLat: newRide.originLat,
     originLng: newRide.originLng,
     destLat: newRide.destLat,
     destLng: newRide.destLng,
-    price: newRide.price,
-    distance: newRide.distance,
+    price: Number(newRide.price),
+    fare: Number(newRide.price),
+    distance: distanceKmNum,
+    distanceKm: distanceKmNum,
+    distanceText,
     rideType: newRide.rideType,
+    vehicleType: newRide.rideType,
+    status: newRide.status,
     _timestamp: new Date().toISOString(),
   });
 
-  // ── إرسال Push Notification (FCM) للكابتنات عند إنشاء رحلة جديدة ──
+  // ── إرسال Push Notification (FCM) للكابتنات المتاحين فقط عند إنشاء رحلة جديدة ──
   // يُستدعى فقط عندما تكون حالة الرحلة PENDING / new_ride لضمان وصول الإشعار
   // في الوقت المناسب (قبل قبول أي كابتن للرحلة). غير حرج — لا يكسر تدفق الرحلة.
   if (newRide.status === 'PENDING' || newRide.status === 'new_ride') {
@@ -239,6 +259,10 @@ async function requestRide(userId, data, io) {
       const captains = await userRepository.findCaptainsWithTokens();
       if (captains.length > 0) {
         const tokens = captains.map((c) => c.fcmToken).filter(Boolean);
+        // إرفاق بيانات الراكب والمسافة النصية بالرحلة ليستخدمها fcm.service في الـ payload
+        newRide.riderName = riderName;
+        newRide.riderPhone = riderPhone;
+        newRide.distanceText = distanceText;
         const result = await notifyCaptainsNewRide(tokens, newRide);
         console.log(
           `📲 FCM new-ride broadcast: sent=${result.sent} failed=${result.failed} invalidTokens=${result.invalidTokens.length}`,

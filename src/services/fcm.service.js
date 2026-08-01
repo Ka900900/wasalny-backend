@@ -26,7 +26,12 @@ async function sendNewRideNotification(fcmToken, ride, opts = {}) {
   }
 
   const title = opts.title || 'رحلة جديدة!';
-  const body = opts.body || 'لديك طلب توصيل جديد، اضغط للتفاصيل';
+  const destination = ride?.destinationAddress || ride?.dropoffPoint || '';
+  const body =
+    opts.body ||
+    (destination
+      ? `طلب توصيل جديد إلى ${destination}`
+      : 'لديك طلب توصيل جديد، اضغط للتفاصيل');
 
   const message = {
     token: fcmToken,
@@ -34,10 +39,19 @@ async function sendNewRideNotification(fcmToken, ride, opts = {}) {
       title,
       body,
     },
-    // Data payload — opened by the app to navigate to the specific ride screen.
+    // Data payload — تستخدمها تطبيقات الكابتن لعرض كارت الرحلة
+    // حتى لو تأخر/فشل حدث السوكيت (Fallback).
     data: {
       type: 'new_ride',
       rideId: ride?.id || '',
+      pickupAddress: ride?.pickupAddress || ride?.pickupPoint || '',
+      destinationAddress: destination,
+      price: ride?.price != null ? String(Number(ride.price)) : '',
+      riderName: ride?.riderName || '',
+      riderPhone: ride?.riderPhone || '',
+      distance:
+        ride?.distanceText ||
+        (ride?.distance != null ? `${Number(ride.distance)} كم` : ''),
       clickAction: 'FLUTTER_NOTIFICATION_CLICK',
     },
     android: {
