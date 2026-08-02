@@ -5,6 +5,13 @@ const { getCommissionRate, settleRide, syncRideStatusToFirestore, createChatRoom
 const { assertCanAcceptRides } = require('../config/wallet.constants');
 
 async function updateLocation(userId, lat, lng) {
+  // ── حارس التوثيق: لا يمكن للكابتن المعلق/المرفوض تحديث موقعه أو الظهور كمتاح ──
+  const existingProfile = await prisma.driverProfile.findUnique({ where: { userId } });
+  if (existingProfile && existingProfile.verificationStatus !== 'APPROVED') {
+    const stateLabel = existingProfile.verificationStatus === 'REJECTED' ? 'مرفوض' : 'قيد المراجعة';
+    throw new Error(`لم يتم اعتماد حسابك بعد (الحالة: ${stateLabel}). لا يمكنك استقبال الرحلات.`);
+  }
+
   // البحث عن المركبة لاستخدام بياناتها الحقيقية في حال إنشاء DriverProfile
   const vehicle = await prisma.vehicle.findFirst({ where: { userId } });
   if (!vehicle) {
@@ -23,6 +30,8 @@ async function updateLocation(userId, lat, lng) {
       carPlateNumber: vehicle.plateNumber,
       vehicleType: vehicle.vehicleType,
       carPhotoUrl: vehicle.licenseFrontUrl,
+      // الملف الجديد يبدأ بحالة PENDING → يبقى غير متاح حتى الاعتماد
+      isAvailable: false,
     },
   });
 }
@@ -31,6 +40,12 @@ async function getAvailableRides(userId, searchRadiusKm = 5) {
   const driverProfile = await prisma.driverProfile.findUnique({ where: { userId } });
   if (!driverProfile || driverProfile.currentLat === null || driverProfile.currentLng === null) {
     throw new Error('موقع الكابتن غير محدد. يرجى تحديث موقعك أولاً.');
+  }
+
+  // ── حارس التوثيق: فقط الكابتن المعتمد يمكنه جلب الرحلات المتاحة ──
+  if (driverProfile.verificationStatus !== 'APPROVED') {
+    const stateLabel = driverProfile.verificationStatus === 'REJECTED' ? 'مرفوض' : 'قيد المراجعة';
+    throw new Error(`لم يتم اعتماد حسابك بعد (الحالة: ${stateLabel}). لا يمكنك استقبال الرحلات.`);
   }
 
   const pendingRides = await prisma.rideRequest.findMany({
@@ -57,6 +72,12 @@ async function getAvailableRides(userId, searchRadiusKm = 5) {
 async function acceptRide(userId, rideId) {
   // حارس حد الدين: لا يمكن قبول رحلات إذا كان الرصيد عند حد الدين أو أقل
   await assertCanAcceptRides(userId);
+
+  // ── حارس التوثيق: لا يمكن لكابتن غير معتمد قبول الرحلات ──
+  const captainProfile = await prisma.driverProfile.findUnique({ where: { userId } });
+  if (!captainProfile || captainProfile.verificationStatus !== 'APPROVED') {
+    throw new Error('لم يتم اعتماد حسابك بعد، لا يمكنك قبول الرحلات.');
+  }
 
   const ride = await prisma.rideRequest.findUnique({ where: { id: rideId } });
   if (!ride) throw new Error('الرحلة غير موجودة');

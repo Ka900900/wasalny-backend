@@ -272,6 +272,127 @@ async function getCaptainDetailsHandler(req, res) {
   }
 }
 
+// ═══════════════════════════════════════════════════════
+//  DASHBOARD HANDLERS (لوحة تحكم وصلني)
+// ═══════════════════════════════════════════════════════
+
+// ── GET /api/v1/admin/stats ──────────────────────────
+async function getAdminStatsHandler(req, res) {
+  try {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    const [totalRides, onlineCaptains, todayRevenue, openTickets] = await Promise.all([
+      prisma.rideRequest.count(),
+      prisma.driverProfile.count({
+        where: { isAvailable: true, verificationStatus: 'APPROVED' },
+      }),
+      prisma.rideRequest.aggregate({
+        _sum: { price: true },
+        where: { status: 'COMPLETED', paidAt: { gte: startOfToday } },
+      }),
+      prisma.supportTicket.count({
+        where: { status: { notIn: ['RESOLVED', 'CLOSED'] } },
+      }),
+    ]);
+
+    res.json({
+      totalRides,
+      onlineCaptains,
+      todayRevenue: Number(todayRevenue._sum.price || 0),
+      openTickets,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'خطأ في جلب إحصائيات لوحة التحكم' });
+  }
+}
+
+// ── GET /api/v1/admin/rides?limit=8 ───────────────────
+async function listRecentRidesHandler(req, res) {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 8, 50);
+    const rides = await prisma.rideRequest.findMany({
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        rider: { select: { firstName: true, lastName: true } },
+        driver: { select: { firstName: true, lastName: true } },
+      },
+    });
+
+    const mapped = rides.map((r) => ({
+      id: r.id,
+      riderName: `${r.rider?.firstName ?? ''} ${r.rider?.lastName ?? ''}`.trim(),
+      captainName: r.driver ? `${r.driver.firstName} ${r.driver.lastName}`.trim() : null,
+      from: r.pickupAddress || r.pickupPoint,
+      to: r.destinationAddress || r.dropoffPoint,
+      status: r.status,
+      fare: Number(r.price) || 0,
+      createdAt: r.createdAt,
+    }));
+
+    res.json(mapped);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'خطأ في جلب الرحلات الأخيرة' });
+  }
+}
+
+// ── GET /api/v1/admin/analytics?range=today|7d|30d ───
+async function getAnalyticsHandler(req, res) {
+  try {
+    const range = req.query.range || '7d';
+    const now = new Date();
+    const points = [];
+
+    if (range === 'today') {
+      // آخر 24 ساعة على شكل فترات ساعة
+      const start = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      const rides = await prisma.rideRequest.findMany({
+        where: { createdAt: { gte: start } },
+        select: { createdAt: true, price: true, status: true },
+      });
+      for (let i = 23; i >= 0; i--) {
+        const hourStart = new Date(now.getTime() - i * 60 * 60 * 1000);
+        const hourEnd = new Date(hourStart.getTime() + 60 * 60 * 1000);
+        const inRange = rides.filter((r) => r.createdAt >= hourStart && r.createdAt < hourEnd);
+        points.push({
+          label: hourStart.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+          rides: inRange.length,
+          revenue: Number(inRange.reduce((s, r) => s + (r.status === 'COMPLETED' ? Number(r.price) : 0), 0)),
+        });
+      }
+    } else {
+      const days = range === '30d' ? 30 : 7;
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      start.setDate(start.getDate() - (days - 1));
+      const rides = await prisma.rideRequest.findMany({
+        where: { createdAt: { gte: start } },
+        select: { createdAt: true, price: true, status: true },
+      });
+      for (let i = 0; i < days; i++) {
+        const dayStart = new Date(start);
+        dayStart.setDate(start.getDate() + i);
+        const dayEnd = new Date(dayStart);
+        dayEnd.setDate(dayStart.getDate() + 1);
+        const inRange = rides.filter((r) => r.createdAt >= dayStart && r.createdAt < dayEnd);
+        points.push({
+          label: dayStart.toLocaleDateString('ar-EG', { day: 'numeric', month: 'short' }),
+          rides: inRange.length,
+          revenue: Number(inRange.reduce((s, r) => s + (r.status === 'COMPLETED' ? Number(r.price) : 0), 0)),
+        });
+      }
+    }
+
+    res.json(points);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'خطأ في جلب بيانات التحليلات' });
+  }
+}
+
 module.exports = {
   listWithdrawalsHandler,
   approveWithdrawalHandler,
@@ -282,4 +403,7 @@ module.exports = {
   rejectCaptainHandler,
   listAllCaptainsHandler,
   getCaptainDetailsHandler,
+  getAdminStatsHandler,
+  listRecentRidesHandler,
+  getAnalyticsHandler,
 };

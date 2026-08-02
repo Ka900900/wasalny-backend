@@ -33,14 +33,15 @@ async function updateFcmToken(id, fcmToken) {
 
 async function findCaptainsWithTokens() {
   // الكابتنات المتاحون فقط (online): role = DRIVER + نشط + لديه FCM token
-  // + DriverProfile.isAvailable === true (أي أن الكابتن مفتوح لاستقبال الرحلات).
-  // هذا يمنع إرسال إشعار رحلة جديدة لكابتن Offline / غير متاح.
+  // + DriverProfile.isAvailable === true (أي أن الكابتن مفتوح لاستقبال الرحلات)
+  // + verificationStatus === APPROVED (معتمد فقط لا يتلقى إشعارات رحلات جديدة).
+  // هذا يمنع إرسال إشعار رحلة جديدة لكابتن Offline / غير متاح / غير معتمد.
   return prisma.user.findMany({
     where: {
       role: 'DRIVER',
       isActive: true,
       fcmToken: { not: null },
-      driverProfile: { is: { isAvailable: true } },
+      driverProfile: { is: { isAvailable: true, verificationStatus: 'APPROVED' } },
     },
     select: { id: true, fcmToken: true },
   });
@@ -55,6 +56,11 @@ async function setDriverAvailability(userId, isAvailable) {
   // 1. التحقق من وجود DriverProfile مسبقاً
   const existingProfile = await prisma.driverProfile.findUnique({ where: { userId } });
   if (existingProfile) {
+    // ── حارس التوثيق: الكابتن المعلق/المرفوض لا يمكنه الظهور كمتاح ──
+    if (isAvailable && existingProfile.verificationStatus !== 'APPROVED') {
+      const stateLabel = existingProfile.verificationStatus === 'REJECTED' ? 'مرفوض' : 'قيد المراجعة';
+      throw new Error(`لم يتم اعتماد حسابك بعد (الحالة: ${stateLabel}). يرجى الانتظار حتى تراجع الإدارة مستنداتك.`);
+    }
     // الـ Profile موجود → تحديث حالة التوفر فقط
     return prisma.driverProfile.update({
       where: { userId },
@@ -71,7 +77,8 @@ async function setDriverAvailability(userId, isAvailable) {
   return prisma.driverProfile.create({
     data: {
       userId,
-      isAvailable: !!isAvailable,
+      // الملف الجديد يبدأ بحالة PENDING → يبقى غير متاح حتى يتم اعتماده
+      isAvailable: false,
       carModel: `${vehicle.make} ${vehicle.model}`,
       carColor: vehicle.color,
       carPlateNumber: vehicle.plateNumber,

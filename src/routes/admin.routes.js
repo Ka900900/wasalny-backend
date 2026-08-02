@@ -13,6 +13,9 @@ const {
   rejectCaptainHandler,
   listAllCaptainsHandler,
   getCaptainDetailsHandler,
+  getAdminStatsHandler,
+  listRecentRidesHandler,
+  getAnalyticsHandler,
 } = require('../controllers/admin.controller');
 const { rejectCaptainSchema } = require('../validators/admin.validator');
 const {
@@ -22,6 +25,12 @@ const {
 } = require('../controllers/support.controller');
 
 // كل المسارات مخصصة للأدمن فقط
+
+// مسارات لوحة التحكم (Dashboard)
+router.get('/stats', authenticateToken, requireRole('ADMIN'), getAdminStatsHandler);
+router.get('/rides', authenticateToken, requireRole('ADMIN'), listRecentRidesHandler);
+router.get('/analytics', authenticateToken, requireRole('ADMIN'), getAnalyticsHandler);
+
 router.get('/withdrawals', authenticateToken, requireRole('ADMIN'), listWithdrawalsHandler);
 router.patch('/withdrawals/:id/approve', authenticateToken, requireRole('ADMIN'), approveWithdrawalHandler);
 router.patch('/withdrawals/:id/reject', authenticateToken, requireRole('ADMIN'), validate(rejectWithdrawalSchema), rejectWithdrawalHandler);
