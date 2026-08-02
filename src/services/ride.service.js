@@ -5,6 +5,7 @@ const { emitRideStatus, SocketEvents } = require('../config/socket');
 const { Prisma } = require('@prisma/client');
 const { notifyCaptainsNewRide } = require('./fcm.service');
 const userRepository = require('../repositories/user.repository');
+const { getWalletLimit, DEFAULT_LIMITS } = require('../config/wallet.constants');
 
 // ── نظام العمولة مع دعم عرض الكباتن الأوائل (قابل للتعديل من Config) ──
 let _configCache = null;
@@ -442,13 +443,21 @@ async function _settleRideCore(tx, { rideId, driverId }) {
     });
   } else if (paymentMethod === 'cash') {
     // ── الدفع نقداً ───────────────────────────────
-    // الكابتن قبض كامل القيمة من الراكب، يخصم منه العمولة فقط
+    // الكابتن قبض كامل القيمة من الراكب، يخصم منه العمولة فقط.
+    // يُسمح بخصم العمولة حتى لو أصبح الرصيد سالباً، بشرط ألا يتجاوز حد الدين.
     const capWallet = await tx.wallet.findUnique({ where: { userId: ride.driverId } });
     if (!capWallet) throw new Error('محفظة الكابتن غير موجودة');
-    if (capWallet.balance.lt(commission)) {
-      throw new Error('رصيد المحفظة غير كافٍ لخصم العمولة');
-    }
     const capNewBal = capWallet.balance.minus(commission);
+    const minBalance = await getWalletLimit(
+      'CAPTAIN_MIN_BALANCE',
+      DEFAULT_LIMITS.CAPTAIN_MIN_BALANCE
+    );
+    // لو (الرصيد - العمولة) < حد الدين → ارفض التسوية حتى لا يزداد الدين
+    if (capNewBal.lt(minBalance)) {
+      throw new Error(
+        `رصيدك وصل لحد الدين (${Math.abs(minBalance)} ج). اشحن المحفظة لإكمال الرحلات`
+      );
+    }
     await tx.wallet.update({
       where: { id: capWallet.id },
       data: { balance: capNewBal, totalEarned: { increment: driverEarning } },

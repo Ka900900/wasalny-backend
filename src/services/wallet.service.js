@@ -1,6 +1,7 @@
 const prisma = require('../config/prisma');
 const { createKashierSession } = require('./kashier');
 const { Prisma } = require('@prisma/client');
+const { getWalletLimits, DEFAULT_LIMITS, getCaptainWallet } = require('../config/wallet.constants');
 
 async function ensureWallet(userId, tx) {
   const db = tx || prisma;
@@ -16,12 +17,20 @@ async function ensureWallet(userId, tx) {
 async function getWalletBalance(userId) {
   const wallet = await ensureWallet(userId);
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { firstName: true, lastName: true } });
+  const limits = await getWalletLimits();
+  const balanceNum = parseFloat(wallet.balance.toString());
   return {
     balance: wallet.balance,
     pendingWithdraw: wallet.pendingWithdraw,
     totalEarned: wallet.totalEarned,
     totalWithdrawn: wallet.totalWithdrawn,
     fullName: `${user.firstName} ${user.lastName}`,
+    // ── سياسة محفظة الكابتن (لا تُكسر الحقول الحالية) ──
+    minBalance: limits.CAPTAIN_MIN_BALANCE,
+    maxBalance: limits.CAPTAIN_MAX_BALANCE,
+    minTopUp: limits.CAPTAIN_MIN_TOPUP,
+    canAcceptRides: balanceNum > limits.CAPTAIN_MIN_BALANCE,
+    canWithdraw: balanceNum > 0,
   };
 }
 
@@ -37,6 +46,11 @@ async function requestWithdrawal(userId, { amount, withdrawMethod, bankName, ban
   return prisma.$transaction(async (tx) => {
     // ضمان وجود المحفظة (إنشاؤها تلقائياً برصيد 0) لحل مشكلة الـ 404
     const wallet = await ensureWallet(userId, tx);
+
+    // السحب مسموح فقط إذا كان الرصيد > 0
+    if (wallet.balance.lte(0)) {
+      throw new Error('الرصيد يجب أن يكون أكبر من صفر لطلب السحب');
+    }
 
     const available = wallet.balance.minus(wallet.reservedAmount);
     if (available.lt(amt)) {
@@ -91,7 +105,20 @@ async function getWithdraws(userId) {
   return prisma.withdrawRequest.findMany({ where: { walletId: wallet.id }, orderBy: { createdAt: 'desc' }, take: 50 });
 }
 
-async function topUpWallet(userId, { amount, paymentMethod }) {
+/**
+ * يتحقق من صحة مبلغ الشحن حسب سياسة محفظة الكابتن:
+ * - أقل مبلغ شحن: CAPTAIN_MIN_TOPUP (50 ج)
+ * - أقصى رصيد في المحفظة: CAPTAIN_MAX_BALANCE (1500 ج)
+ * - الشحن متاح حتى لو كان الرصيد سالباً أو صفراً.
+ * @param {string} userId
+ * @param {number} amount
+ * @returns {Promise<{parsedAmount: number, newBalance: number}>}
+ */
+async function validateTopUp(userId, amount) {
+  const limits = await getWalletLimits();
+  const minTopUp = limits.CAPTAIN_MIN_TOPUP;
+  const maxBalance = limits.CAPTAIN_MAX_BALANCE;
+
   const parsedAmount = Number(amount);
   if (
     amount === null ||
@@ -101,6 +128,23 @@ async function topUpWallet(userId, { amount, paymentMethod }) {
   ) {
     throw new Error('المبلغ غير صالح');
   }
+  if (parsedAmount < minTopUp) {
+    throw new Error(`أقل مبلغ للشحن هو ${minTopUp} ج.م`);
+  }
+
+  const wallet = await getCaptainWallet(userId);
+  const currentBalance = wallet ? parseFloat(wallet.balance.toString()) : 0;
+  const newBalance = currentBalance + parsedAmount;
+  if (newBalance > maxBalance) {
+    throw new Error(`لا يمكن أن يتجاوز رصيد المحفظة ${maxBalance} ج.م`);
+  }
+
+  return { parsedAmount, newBalance };
+}
+
+async function topUpWallet(userId, { amount, paymentMethod }) {
+  // التحقق من سياسة الشحن (الحد الأدنى والأقصى) قبل إنشاء أي جلسة دفع
+  const { parsedAmount } = await validateTopUp(userId, amount);
 
   // رفض طرق الدفع غير المدعومة
   const supportedMethods = ['card', 'vodafone_cash', 'instapay'];
@@ -266,7 +310,7 @@ async function setDefaultPaymentMethod(userId, methodId) {
 }
 
 module.exports = {
-  ensureWallet, getWalletBalance, getTransactions, requestWithdrawal, getWithdraws, topUpWallet,
+  ensureWallet, getWalletBalance, getTransactions, requestWithdrawal, getWithdraws, topUpWallet, validateTopUp,
   listWithdrawals, approveWithdrawal, rejectWithdrawal, completeWithdrawal,
   listPaymentMethods, addPaymentMethod, deletePaymentMethod, setDefaultPaymentMethod,
 };

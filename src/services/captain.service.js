@@ -2,6 +2,7 @@ const prisma = require('../config/prisma');
 const { Prisma } = require('@prisma/client');
 const { haversineDistance } = require('../services/geo');
 const { getCommissionRate, settleRide, syncRideStatusToFirestore, createChatRoom } = require('./ride.service');
+const { assertCanAcceptRides } = require('../config/wallet.constants');
 
 async function updateLocation(userId, lat, lng) {
   // البحث عن المركبة لاستخدام بياناتها الحقيقية في حال إنشاء DriverProfile
@@ -54,6 +55,9 @@ async function getAvailableRides(userId, searchRadiusKm = 5) {
 }
 
 async function acceptRide(userId, rideId) {
+  // حارس حد الدين: لا يمكن قبول رحلات إذا كان الرصيد عند حد الدين أو أقل
+  await assertCanAcceptRides(userId);
+
   const ride = await prisma.rideRequest.findUnique({ where: { id: rideId } });
   if (!ride) throw new Error('الرحلة غير موجودة');
   if (ride.status !== 'PENDING') throw new Error('الرحلة لم تعد متاحة');

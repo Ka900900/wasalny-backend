@@ -1,6 +1,7 @@
-const { getWalletBalance, getTransactions, requestWithdrawal, getWithdraws, topUpWallet, listPaymentMethods, addPaymentMethod, deletePaymentMethod, setDefaultPaymentMethod } = require('../services/wallet.service');
+const { getWalletBalance, getTransactions, requestWithdrawal, getWithdraws, topUpWallet, validateTopUp, listPaymentMethods, addPaymentMethod, deletePaymentMethod, setDefaultPaymentMethod } = require('../services/wallet.service');
 const { createKashierSession, queryKashierTransaction, payWithWalletDirect, payWithCardDirect } = require('../services/kashier');
 const prisma = require('../config/prisma');
+const { getWalletLimits, DEFAULT_LIMITS } = require('../config/wallet.constants');
 
 async function getWalletBalanceHandler(req, res) {
   try {
@@ -8,13 +9,18 @@ async function getWalletBalanceHandler(req, res) {
     res.json(data);
   } catch (error) {
     console.error(error);
-    // fallback آمن: نرجّع رصيد صفر بدل 500
+    // fallback آمن: نرجّع رصيد صفر بدل 500 (مع الحفاظ على حقول السياسة)
     res.json({
       balance: 0,
       pendingWithdraw: 0,
       totalEarned: 0,
       totalWithdrawn: 0,
       fullName: '',
+      minBalance: DEFAULT_LIMITS.CAPTAIN_MIN_BALANCE,
+      maxBalance: DEFAULT_LIMITS.CAPTAIN_MAX_BALANCE,
+      minTopUp: DEFAULT_LIMITS.CAPTAIN_MIN_TOPUP,
+      canAcceptRides: true,
+      canWithdraw: false,
     });
   }
 }
@@ -65,7 +71,8 @@ async function topUpWalletHandler(req, res) {
     res.json({ message: 'تم شحن المحفظة', balance: result.balance });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'خطأ في شحن المحفظة' });
+    // رسائل التحقق من السياسة (الحد الأدنى/الأقصى) تُرجَع كـ 400 برسالة واضحة
+    res.status(400).json({ error: error.message || 'خطأ في شحن المحفظة' });
   }
 }
 
@@ -96,6 +103,13 @@ async function initiatePaymentHandler(req, res) {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       return res.status(404).json({ error: 'المستخدم غير موجود' });
+    }
+
+    // التحقق من سياسة محفظة الكابتن (الحد الأدنى للشحن + أقصى رصيد)
+    try {
+      await validateTopUp(userId, amount);
+    } catch (validationError) {
+      return res.status(400).json({ error: validationError.message });
     }
 
     // التحقق من اكتمال بيانات العميل قبل إرسالها لـ Kashier
@@ -155,6 +169,15 @@ async function kashierCheckoutPageHandler(req, res) {
     });
     if (!user) {
       return res.status(404).send('<h1 style="color:red;text-align:center;margin-top:50px;">❌ المستخدم غير موجود</h1>');
+    }
+
+    // التحقق من سياسة محفظة الكابتن (الحد الأدنى للشحن + أقصى رصيد)
+    try {
+      await validateTopUp(user.id, amt);
+    } catch (validationError) {
+      return res
+        .status(400)
+        .send(`<h1 style="color:red;text-align:center;margin-top:50px;">❌ ${validationError.message}</h1>`);
     }
 
     const merchantId = process.env.KASHIER_MID;
@@ -279,6 +302,22 @@ async function kashierCallbackHandler(req, res) {
         .send(`<h1 style="color:red;text-align:center;margin-top:50px;">❌ المستخدم غير موجود</h1>`);
     }
 
+    // حارس أقصى رصيد (دفاع إضافي بعد نجاح الدفع — يرفض إن تجاوز 1500 ج)
+    const limits = await getWalletLimits();
+    const existingWallet = await prisma.wallet.findUnique({
+      where: { userId: walletUser.id },
+    });
+    const currentBalance = existingWallet
+      ? parseFloat(existingWallet.balance.toString())
+      : 0;
+    const topUpAmount = remote.amount || 0;
+    if (currentBalance + topUpAmount > limits.CAPTAIN_MAX_BALANCE) {
+      return res
+        .status(400)
+        .setHeader('Content-Type', 'text/html; charset=utf-8')
+        .send(`<h1 style="color:red;text-align:center;margin-top:50px;">❌ لا يمكن أن يتجاوز رصيد المحفظة ${limits.CAPTAIN_MAX_BALANCE} ج.م</h1>`);
+    }
+
     // عملية ذرية: تحديث الرصيد + تسجيل المعاملة في نفس Prisma transaction
     const { wallet } = await prisma.$transaction(async (tx) => {
       const w = await tx.wallet.upsert({
@@ -334,6 +373,13 @@ async function initiateTopUp(req, res) {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       return res.status(404).json({ error: 'المستخدم غير موجود' });
+    }
+
+    // التحقق من سياسة محفظة الكابتن (الحد الأدنى للشحن + أقصى رصيد)
+    try {
+      await validateTopUp(userId, amount);
+    } catch (validationError) {
+      return res.status(400).json({ error: validationError.message });
     }
 
     const orderId = `TOPUP_${userId}_${Date.now()}`;
@@ -413,6 +459,20 @@ async function confirmTopUp(req, res) {
       const userId = req.user?.userId;
       if (!userId) {
         return res.status(401).json({ error: 'المستخدم غير مصرح' });
+      }
+
+      // حارس أقصى رصيد (دفاع إضافي بعد نجاح الدفع — يرفض إن تجاوز 1500 ج)
+      const limits = await getWalletLimits();
+      const existingWallet = await prisma.wallet.findUnique({
+        where: { userId },
+      });
+      const currentBalance = existingWallet
+        ? parseFloat(existingWallet.balance.toString())
+        : 0;
+      if (currentBalance + amount > limits.CAPTAIN_MAX_BALANCE) {
+        return res.status(400).json({
+          error: `لا يمكن أن يتجاوز رصيد المحفظة ${limits.CAPTAIN_MAX_BALANCE} ج.م`,
+        });
       }
 
       // البحث عن المحفظة أو إنشائها — عملية ذرية

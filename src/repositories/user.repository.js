@@ -1,4 +1,5 @@
 const prisma = require('../config/prisma');
+const { assertCanAcceptRides } = require('../config/wallet.constants');
 
 async function findByFirebaseUid(firebaseUid) {
   return prisma.user.findUnique({ where: { firebaseUid } });
@@ -46,6 +47,11 @@ async function findCaptainsWithTokens() {
 }
 
 async function setDriverAvailability(userId, isAvailable) {
+  // حارس حد الدين: عند التفعيل (online) يُمنع إذا كان الرصيد عند حد الدين أو أقل
+  if (isAvailable) {
+    await assertCanAcceptRides(userId);
+  }
+
   // 1. التحقق من وجود DriverProfile مسبقاً
   const existingProfile = await prisma.driverProfile.findUnique({ where: { userId } });
   if (existingProfile) {
