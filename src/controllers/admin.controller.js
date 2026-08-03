@@ -393,6 +393,114 @@ async function getAnalyticsHandler(req, res) {
   }
 }
 
+// ── GET /api/v1/admin/earnings?period=monthly|halfYearly|yearly ──
+// Response shape matches the admin dashboard (wasalny-admin) contract:
+//   { period, summary: { revenue, commission, captainEarnings, completedRides },
+//     points: [{ label, revenue, commission, captainEarnings, rides }] }
+// Also includes companyCommission / completedRides aliases per the requested spec.
+// period semantics:
+//   monthly    = last 30 days   → aggregated DAILY
+//   halfYearly = last 6 months  → aggregated MONTHLY
+//   yearly     = last 12 months → aggregated MONTHLY
+async function getEarningsHandler(req, res) {
+  try {
+    const rawPeriod = (req.query.period || 'halfYearly').trim().toLowerCase();
+    // Accept the dashboard spelling (halfYearly) + old spelling (semiannual), case-insensitive
+    let period;
+    if (rawPeriod === 'monthly') period = 'monthly';
+    else if (rawPeriod === 'halfyearly' || rawPeriod === 'semiannual') period = 'halfYearly';
+    else if (rawPeriod === 'yearly') period = 'yearly';
+    else return res.status(400).json({ error: 'period must be monthly, halfYearly or yearly' });
+
+    const ARABIC_MONTHS = [
+      'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
+      'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر',
+    ];
+
+    const now = new Date();
+    const windows = [];
+
+    // Build the time windows (oldest-first so the chart reads left → right).
+    if (period === 'monthly') {
+      // Last 30 days, one window per full day [00:00, next 00:00)
+      for (let i = 29; i >= 0; i--) {
+        const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+        const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1);
+        windows.push({
+          start,
+          end,
+          label: `${start.getDate()} ${ARABIC_MONTHS[start.getMonth()]}`,
+        });
+      }
+    } else if (period === 'halfYearly' || period === 'yearly') {
+      // Last 6 (halfYearly) or 12 (yearly) months, one window per calendar month.
+      const count = period === 'halfYearly' ? 6 : 12;
+      const base = new Date(now.getFullYear(), now.getMonth(), 1);
+      for (let i = count - 1; i >= 0; i--) {
+        const start = new Date(base.getFullYear(), base.getMonth() - i, 1);
+        const end = new Date(start.getFullYear(), start.getMonth() + 1, 1);
+        windows.push({ start, end, label: ARABIC_MONTHS[start.getMonth()] });
+      }
+    }
+
+    // Aggregate COMPLETED rides per window (paidAt when present, else createdAt).
+    const points = [];
+    for (const w of windows) {
+      const agg = await prisma.rideRequest.aggregate({
+        _sum: { price: true, commission: true, driverEarning: true },
+        _count: { _all: true },
+        where: {
+          status: 'COMPLETED',
+          OR: [
+            { paidAt: { gte: w.start, lt: w.end } },
+            { paidAt: null, createdAt: { gte: w.start, lt: w.end } },
+          ],
+        },
+      });
+
+      const revenue = Math.round(Number(agg._sum.price || 0) * 100) / 100;
+      const commission = Math.round(Number(agg._sum.commission || 0) * 100) / 100;
+      const captainEarnings = Math.round(Number(agg._sum.driverEarning || 0) * 100) / 100;
+      const rides = Number(agg._count._all || 0);
+
+      points.push({
+        label: w.label,
+        revenue,
+        commission,
+        companyCommission: commission, // alias per admin spec
+        captainEarnings,
+        rides,
+        completedRides: rides, // alias per admin spec
+      });
+    }
+
+    // Summary = totals over all windows (dashboard KPI cards).
+    const summary = {
+      revenue: 0,
+      commission: 0,
+      companyCommission: 0,
+      captainEarnings: 0,
+      completedRides: 0,
+    };
+    for (const p of points) {
+      summary.revenue += p.revenue;
+      summary.commission += p.commission;
+      summary.companyCommission += p.companyCommission;
+      summary.captainEarnings += p.captainEarnings;
+      summary.completedRides += p.completedRides;
+    }
+    summary.revenue = Math.round(summary.revenue * 100) / 100;
+    summary.commission = Math.round(summary.commission * 100) / 100;
+    summary.companyCommission = Math.round(summary.companyCommission * 100) / 100;
+    summary.captainEarnings = Math.round(summary.captainEarnings * 100) / 100;
+
+    res.json({ period, summary, points });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'خطأ في جلب بيانات الأرباح' });
+  }
+}
+
 module.exports = {
   listWithdrawalsHandler,
   approveWithdrawalHandler,
@@ -406,4 +514,5 @@ module.exports = {
   getAdminStatsHandler,
   listRecentRidesHandler,
   getAnalyticsHandler,
+  getEarningsHandler,
 };

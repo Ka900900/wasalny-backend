@@ -16,6 +16,7 @@ const {
   getAdminStatsHandler,
   listRecentRidesHandler,
   getAnalyticsHandler,
+  getEarningsHandler,
 } = require('../controllers/admin.controller');
 const { rejectCaptainSchema } = require('../validators/admin.validator');
 const {
@@ -30,6 +31,7 @@ const {
 router.get('/stats', authenticateToken, requireRole('ADMIN'), getAdminStatsHandler);
 router.get('/rides', authenticateToken, requireRole('ADMIN'), listRecentRidesHandler);
 router.get('/analytics', authenticateToken, requireRole('ADMIN'), getAnalyticsHandler);
+router.get('/earnings', authenticateToken, requireRole('ADMIN'), getEarningsHandler);
 
 router.get('/withdrawals', authenticateToken, requireRole('ADMIN'), listWithdrawalsHandler);
 router.patch('/withdrawals/:id/approve', authenticateToken, requireRole('ADMIN'), approveWithdrawalHandler);
