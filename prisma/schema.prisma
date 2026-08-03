@@ -98,6 +98,7 @@ model User {
   sentMessages     Message[] @relation("SentMessages")
   receivedMessages Message[] @relation("ReceivedMessages")
   rideMessages     RideMessage[] @relation("RideMessageSender")
+  notifications    Notification[]
 }
 
 model FAQ {
@@ -379,6 +380,24 @@ model Config {
   valueType   String   @default("NUMBER")
   description String?
   updatedAt   DateTime @updatedAt
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String? // null = إشعار عام للأدمن (لوحة التحكم)
+  type      String // SUPPORT_TICKET | SUPPORT_MESSAGE | WITHDRAWAL | LOW_RATING | CAPTAIN_PENDING
+  title     String
+  body      String
+  data      Json?
+  link      String? // رابط التنقّل في لوحة التحكم (مثل /support)
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
 }
 
 model Vehicle {

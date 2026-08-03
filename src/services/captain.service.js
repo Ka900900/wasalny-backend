@@ -3,6 +3,7 @@ const { Prisma } = require('@prisma/client');
 const { haversineDistance, getGovernorateFromCoords } = require('../services/geo');
 const { getCommissionRate, settleRide, syncRideStatusToFirestore, createChatRoom } = require('./ride.service');
 const { assertCanAcceptRides } = require('../config/wallet.constants');
+const { createCaptainPendingNotification } = require('./notification.service');
 
 async function updateLocation(userId, lat, lng, residenceGovernorate) {
   // ── حارس التوثيق: لا يمكن للكابتن المعلق/المرفوض تحديث موقعه أو الظهور كمتاح ──
@@ -30,7 +31,7 @@ async function updateLocation(userId, lat, lng, residenceGovernorate) {
       ? getGovernorateFromCoords(lat, lng)
       : undefined;
 
-  return prisma.driverProfile.upsert({
+  const profile = await prisma.driverProfile.upsert({
     where: { userId },
     update: {
       currentLat: lat,
@@ -51,6 +52,18 @@ async function updateLocation(userId, lat, lng, residenceGovernorate) {
       isAvailable: false,
     },
   });
+
+  // إشعار للأدمن عند إنشاء ملف كابتن جديد لأول مرة (تسجيل كابتن جديد — لا يُفشل العملية عند الخطأ)
+  if (isNewProfile) {
+    createCaptainPendingNotification(userId, {
+      type: 'CAPTAIN_PENDING',
+      title: 'كابتن جديد بانتظار المراجعة',
+      body: 'سجّل كابتن جديد بحالة "قيد المراجعة". راجع مستنداته للاعتماد.',
+      link: '/captains',
+    });
+  }
+
+  return profile;
 }
 
 async function getAvailableRides(userId, searchRadiusKm = 5) {

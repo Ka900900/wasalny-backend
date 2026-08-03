@@ -6,6 +6,7 @@ const { Prisma } = require('@prisma/client');
 const { notifyCaptainsNewRide } = require('./fcm.service');
 const userRepository = require('../repositories/user.repository');
 const { getWalletLimit, DEFAULT_LIMITS } = require('../config/wallet.constants');
+const { createAdminNotification } = require('./notification.service');
 
 // ── نظام العمولة مع دعم عرض الكباتن الأوائل (قابل للتعديل من Config) ──
 let _configCache = null;
@@ -63,6 +64,16 @@ async function getCommissionRate(driverId) {
 
   // جميع الشروط مستوفاة → العمولة التشجيعية
   return promoRate;
+}
+
+/**
+ * إبطال ذاكرة إعدادات الـ Config مؤقتاً.
+ * تُستدعى بعد تعديل نسبة العمولة من لوحة التحكم حتى يُطبَّق التغيير فوراً
+ * (بدلاً من انتظار انتهاء مدة الكاش 5 دقائق).
+ */
+function resetConfigCache() {
+  _configCache = null;
+  _configCacheAt = 0;
 }
 
 const CAR_NAMES = ['economy', 'comfort', 'premium', 'xl'];
@@ -375,6 +386,17 @@ async function rateRide(userId, { rideId, toUserId, rating, comment }) {
     });
   }
 
+  // إشعار للأدمن عند تقييم منخفض (1 أو 2 نجمة) — لا يُفشل العملية عند الخطأ
+  if (rating <= 2) {
+    createAdminNotification({
+      type: 'LOW_RATING',
+      title: 'تقييم منخفض',
+      body: `تم تسجيل تقييم ${rating} من 5 على رحلة.`,
+      data: { rideId, toUserId, rating },
+      link: '/ratings',
+    });
+  }
+
   return { rating: newRating, averageRating, toUserId };
 }
 
@@ -529,4 +551,4 @@ async function settleRide(tx, { rideId, driverId } = {}) {
   return prisma.$transaction(async (t) => _settleRideCore(t, { rideId, driverId }));
 }
 
-module.exports = { getRideOptions, calculateRideFare, requestRide, cancelRide, rateRide, getCommissionRate, settleRide, syncRideStatusToFirestore, createChatRoom };
+module.exports = { getRideOptions, calculateRideFare, requestRide, cancelRide, rateRide, getCommissionRate, settleRide, syncRideStatusToFirestore, createChatRoom, resetConfigCache };

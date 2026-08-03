@@ -1,4 +1,5 @@
 const prisma = require('../config/prisma');
+const { createAdminNotification } = require('../services/notification.service');
 
 // ═══════════════════════════════════════════════════════
 //  NEW TICKET-BASED HANDLERS
@@ -60,6 +61,15 @@ async function createTicketHandler(req, res) {
       });
 
       return newTicket;
+    });
+
+    // إشعار للأدمن بإنشاء تذكرة دعم جديدة (لا يُفشل العملية عند الخطأ)
+    createAdminNotification({
+      type: 'SUPPORT_TICKET',
+      title: 'تذكرة دعم جديدة',
+      body: `تذكرة جديدة: ${subject}`,
+      data: { ticketId: ticket.id, subject },
+      link: `/support?ticket=${ticket.id}`,
     });
 
     // إرجاع التذكرة مع رسالة التأكيد
@@ -205,6 +215,15 @@ async function addTicketMessageHandler(req, res) {
       });
 
       return newMessage;
+    });
+
+    // إشعار للأدمن بوجود رسالة جديدة من مستخدم على تذكرة (لا يُفشل العملية عند الخطأ)
+    createAdminNotification({
+      type: 'SUPPORT_MESSAGE',
+      title: 'رسالة دعم جديدة',
+      body: `رسالة جديدة من مستخدم على تذكرة #${ticketId.slice(0, 8)}`,
+      data: { ticketId, messageId: message.id },
+      link: `/support?ticket=${ticketId}`,
     });
 
     // بث الرسالة عبر Socket.IO إلى غرفة الدعم

@@ -96,6 +96,22 @@ async function requestWithdrawal(userId, { amount, withdrawMethod, bankName, ban
       },
     });
 
+    // إشعار للأدمن بطلب سحب جديد (داخل نفس المعاملة — لا يُفشل السحب عند الخطأ)
+    try {
+      await tx.notification.create({
+        data: {
+          userId: null,
+          type: 'WITHDRAWAL',
+          title: 'طلب سحب جديد',
+          body: `طلب سحب ${amt.toString()} ج.م بانتظار المراجعة`,
+          data: { withdrawRequestId: withdraw.id, amount: amt.toString(), withdrawMethod: method },
+          link: '/wallet',
+        },
+      });
+    } catch (notifErr) {
+      console.error('⚠️ WITHDRAWAL notification error:', notifErr?.message);
+    }
+
     return withdraw;
   });
 }

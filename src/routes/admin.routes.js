@@ -18,6 +18,12 @@ const {
   getAnalyticsHandler,
   getEarningsHandler,
   listRatingsHandler,
+  listNotificationsHandler,
+  getUnreadNotificationsCountHandler,
+  markNotificationReadHandler,
+  markAllNotificationsReadHandler,
+  getSettingsHandler,
+  updateSettingsHandler,
 } = require('../controllers/admin.controller');
 const { rejectCaptainSchema } = require('../validators/admin.validator');
 const {
@@ -63,5 +69,19 @@ router.get('/captains/pending', authenticateToken, requireRole('ADMIN'), listPen
 router.get('/captains/:userId', authenticateToken, requireRole('ADMIN'), getCaptainDetailsHandler);
 router.post('/captains/:userId/approve', authenticateToken, requireRole('ADMIN'), approveCaptainHandler);
 router.post('/captains/:userId/reject', authenticateToken, requireRole('ADMIN'), validate(rejectCaptainSchema), rejectCaptainHandler);
+
+// ═══════════════════════════════════════════════════════
+//  مسارات الإشعارات (لوحة تحكم الأدمن)
+// ═══════════════════════════════════════════════════════
+router.get('/notifications', authenticateToken, requireRole('ADMIN'), listNotificationsHandler);
+router.get('/notifications/unread-count', authenticateToken, requireRole('ADMIN'), getUnreadNotificationsCountHandler);
+router.patch('/notifications/:id/read', authenticateToken, requireRole('ADMIN'), markNotificationReadHandler);
+router.post('/notifications/read-all', authenticateToken, requireRole('ADMIN'), markAllNotificationsReadHandler);
+
+// ═══════════════════════════════════════════════════════
+//  مسارات الإعدادات (لوحة تحكم الأدمن)
+// ═══════════════════════════════════════════════════════
+router.get('/settings', authenticateToken, requireRole('ADMIN'), getSettingsHandler);
+router.put('/settings', authenticateToken, requireRole('ADMIN'), updateSettingsHandler);
 
 module.exports = router;

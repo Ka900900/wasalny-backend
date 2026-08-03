@@ -6,6 +6,7 @@ const {
   completeWithdrawal,
 } = require('../services/wallet.service');
 const { sendSingleNotification } = require('../services/fcm.service');
+const { resetConfigCache } = require('../services/ride.service');
 
 async function listWithdrawalsHandler(req, res) {
   try {
@@ -608,4 +609,157 @@ module.exports = {
   getAnalyticsHandler,
   getEarningsHandler,
   listRatingsHandler,
+  listNotificationsHandler,
+  getUnreadNotificationsCountHandler,
+  markNotificationReadHandler,
+  markAllNotificationsReadHandler,
+  getSettingsHandler,
+  updateSettingsHandler,
 };
+
+// ═══════════════════════════════════════════════════════
+//  NOTIFICATIONS HANDLERS (إشعارات لوحة تحكم الأدمن)
+// ═══════════════════════════════════════════════════════
+
+// ── GET /api/v1/admin/notifications?page=&limit=&unreadOnly= ──
+async function listNotificationsHandler(req, res) {
+  try {
+    const { page = 1, limit = 20, unreadOnly } = req.query;
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+    const skip = (pageNum - 1) * limitNum;
+
+    const where = { userId: null }; // إشعارات الأدمن فقط
+    if (unreadOnly === 'true' || unreadOnly === '1') {
+      where.isRead = false;
+    }
+
+    const [total, unreadCount, notifications] = await Promise.all([
+      prisma.notification.count({ where }),
+      prisma.notification.count({ where: { ...where, isRead: false } }),
+      prisma.notification.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limitNum,
+      }),
+    ]);
+
+    res.json({
+      notifications: notifications.map((n) => ({
+        id: n.id,
+        type: n.type,
+        title: n.title,
+        body: n.body,
+        data: n.data,
+        link: n.link,
+        isRead: n.isRead,
+        createdAt: n.createdAt.toISOString(),
+      })),
+      pagination: {
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(total / limitNum),
+      },
+      unreadCount,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'خطأ في جلب الإشعارات' });
+  }
+}
+
+// ── GET /api/v1/admin/notifications/unread-count ──
+async function getUnreadNotificationsCountHandler(req, res) {
+  try {
+    const count = await prisma.notification.count({
+      where: { userId: null, isRead: false },
+    });
+    res.json({ count });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'خطأ في جلب عدد الإشعارات غير المقروءة' });
+  }
+}
+
+// ── PATCH /api/v1/admin/notifications/:id/read ──
+async function markNotificationReadHandler(req, res) {
+  try {
+    const { id } = req.params;
+    const updated = await prisma.notification.updateMany({
+      where: { id, userId: null },
+      data: { isRead: true },
+    });
+    if (updated.count === 0) {
+      return res.status(404).json({ error: 'الإشعار غير موجود' });
+    }
+    res.json({ message: 'تم تعليم الإشعار كمقروء' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'خطأ في تحديث الإشعار' });
+  }
+}
+
+// ── POST /api/v1/admin/notifications/read-all ──
+async function markAllNotificationsReadHandler(req, res) {
+  try {
+    await prisma.notification.updateMany({
+      where: { userId: null, isRead: false },
+      data: { isRead: true },
+    });
+    res.json({ message: 'تم تعليم جميع الإشعارات كمقروءة' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'خطأ في تحديث الإشعارات' });
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  SETTINGS HANDLERS (إعدادات لوحة التحكم — نسبة العمولة)
+// ═══════════════════════════════════════════════════════
+
+// ── GET /api/v1/admin/settings ──
+async function getSettingsHandler(req, res) {
+  try {
+    const row = await prisma.config.findUnique({
+      where: { key: 'COMMISSION_RATE' },
+    });
+    // القيمة المخزنة ككسر عشري (0.15 = 15%) → نحوّلها لنسبة مئوية للواجهة
+    const stored = row ? parseFloat(row.value) : 0.1;
+    res.json({ commissionRate: Math.round(stored * 10000) / 100 });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'خطأ في جلب الإعدادات' });
+  }
+}
+
+// ── PUT /api/v1/admin/settings ──
+async function updateSettingsHandler(req, res) {
+  try {
+    const { commissionRate } = req.body;
+    const rate = Number(commissionRate);
+    if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
+      return res.status(400).json({ error: 'نسبة العمولة يجب أن تكون رقماً بين 0 و 100' });
+    }
+
+    await prisma.config.upsert({
+      where: { key: 'COMMISSION_RATE' },
+      update: { value: String(rate / 100) },
+      create: {
+        key: 'COMMISSION_RATE',
+        value: String(rate / 100),
+        valueType: 'NUMBER',
+        description: 'نسبة عمولة الشركة من كل رحلة (كسر عشري: 0.15 = 15%)',
+      },
+    });
+
+    // إبطال كاش إعدادات الرحلات حتى تُطبَّق النسبة الجديدة فوراً على الرحلات التالية
+    resetConfigCache();
+
+    res.json({ message: 'تم حفظ الإعدادات بنجاح', commissionRate: rate });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message || 'خطأ في حفظ الإعدادات' });
+  }
+}

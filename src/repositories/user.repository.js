@@ -1,5 +1,6 @@
 const prisma = require('../config/prisma');
 const { assertCanAcceptRides } = require('../config/wallet.constants');
+const { createCaptainPendingNotification } = require('../services/notification.service');
 
 async function findByFirebaseUid(firebaseUid) {
   return prisma.user.findUnique({ where: { firebaseUid } });
@@ -74,7 +75,7 @@ async function setDriverAvailability(userId, isAvailable) {
     throw new Error('برجاء تسجيل بيانات المركبة أولاً');
   }
 
-  return prisma.driverProfile.create({
+  const profile = await prisma.driverProfile.create({
     data: {
       userId,
       // الملف الجديد يبدأ بحالة PENDING → يبقى غير متاح حتى يتم اعتماده
@@ -86,6 +87,16 @@ async function setDriverAvailability(userId, isAvailable) {
       carPhotoUrl: vehicle.licenseFrontUrl,
     },
   });
+
+  // إشعار للأدمن بتسجيل كابتن جديد بانتظار المراجعة (لا يُفشل العملية عند الخطأ)
+  createCaptainPendingNotification(userId, {
+    type: 'CAPTAIN_PENDING',
+    title: 'كابتن جديد بانتظار المراجعة',
+    body: 'سجّل كابتن جديد بحالة "قيد المراجعة". راجع مستنداته للاعتماد.',
+    link: '/captains',
+  });
+
+  return profile;
 }
 
 module.exports = {
