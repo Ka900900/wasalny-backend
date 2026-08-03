@@ -189,6 +189,11 @@ model DriverProfile {
   isAvailable    Boolean         @default(true)
   currentLat     Float?
   currentLng     Float?
+
+  // ── المنطقة السكنية (المحافظة) التي يقيم بها الكابتن ──
+  // تُستخدم لتحديد منطقة توفر الكابتن على خريطة لوحة التحكم
+  residenceGovernorate String?   // مثال: "الجيزة"
+
   balance        Decimal         @db.Decimal(10, 2) @default(0)
   totalTrips     Int             @default(0)
   totalEarnings  Decimal         @db.Decimal(10, 2) @default(0)

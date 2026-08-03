@@ -1,17 +1,16 @@
 /**
- * تحديث موقع الكابتن على الخريطة:
- *   currentLat, currentLng, isAvailable = true
+ * ضبط المنطقة السكنية (المحافظة) للكابتن على خريطة لوحة التحكم:
+ *   residenceGovernorate = "الجيزة"
  * يعثر على المستخدم برقم الهاتف ثم يحدّث DriverProfile المرتبط به فقط
- * (لا يغيّر الاسم / الهاتف / الحالة / المحفظة ... إلخ).
+ * (لا يغيّر الاسم / الهاتف / الحالة / المحفظة / الموقع ... إلخ).
  *
  * الاستخدام:
- *   node --env-file="G:\waslny_backend\.env" "G:\waslny_backend\scripts\set-captain-location.js" "+201066702477"
+ *   node --env-file="G:\waslny_backend\.env" "G:\waslny_backend\scripts\set-captain-governorate.js" "+201066702477" "الجيزة"
  */
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-const TARGET_LAT = 30.0444; // وسط القاهرة
-const TARGET_LNG = 31.2357;
+const DEFAULT_GOVERNORATE = 'الجيزة';
 
 /** يولّد الصيغ الممكنة لرقم هاتف مصري (مع +20 / بدون / بادئ بـ 0 ...) */
 function candidatePhones(raw) {
@@ -32,21 +31,17 @@ function candidatePhones(raw) {
 
 async function main() {
   const phoneArg = (process.argv[2] || '').trim();
+  const gov = (process.argv[3] || '').trim() || DEFAULT_GOVERNORATE;
   const phones = candidatePhones(phoneArg);
 
   console.log('🔎 Searching by phone:', phones.join(', '));
+  console.log('🏷️ Governorate:', gov);
 
   let users = await prisma.user.findMany({
     where: { phoneNumber: { in: phones } },
     select: {
       id: true, firstName: true, lastName: true, phoneNumber: true, role: true,
-      driverProfile: {
-        select: {
-          id: true, currentLat: true, currentLng: true, isAvailable: true,
-          verificationStatus: true, carModel: true, carPlateNumber: true,
-          totalTrips: true, ratingAvg: true,
-        },
-      },
+      driverProfile: { select: { id: true } },
     },
   });
 
@@ -65,13 +60,7 @@ async function main() {
       },
       select: {
         id: true, firstName: true, lastName: true, phoneNumber: true, role: true,
-        driverProfile: {
-          select: {
-            id: true, currentLat: true, currentLng: true, isAvailable: true,
-            verificationStatus: true, carModel: true, carPlateNumber: true,
-            totalTrips: true, ratingAvg: true,
-          },
-        },
+        driverProfile: { select: { id: true } },
       },
     });
   }
@@ -89,38 +78,30 @@ async function main() {
     return;
   }
 
-  console.log('\n📄 Before update:');
-  console.log(JSON.stringify(target.driverProfile, null, 2));
-
-  const updated = await prisma.driverProfile.update({
-    where: { userId: target.id },
-    data: {
-      currentLat: TARGET_LAT,
-      currentLng: TARGET_LNG,
-      isAvailable: true,
-    },
-  });
-
-  console.log('\n✅ Updated driverProfile (only lat/lng + isAvailable):');
-  console.log(
-    JSON.stringify(
-      {
-        id: updated.id,
-        userId: updated.userId,
-        currentLat: updated.currentLat,
-        currentLng: updated.currentLng,
-        isAvailable: updated.isAvailable,
-        verificationStatus: updated.verificationStatus,
-        // للتأكد أننا لم نمسّ بيانات أخرى:
-        carModel: updated.carModel,
-        carPlateNumber: updated.carPlateNumber,
-        totalTrips: updated.totalTrips,
-        ratingAvg: updated.ratingAvg,
-      },
-      null,
-      2
-    )
+  // تأكّد أن العمود موجود (idempotent) — يعمل حتى لو الـ client قديم
+  await prisma.$executeRawUnsafe(
+    'ALTER TABLE "DriverProfile" ADD COLUMN IF NOT EXISTS "residenceGovernorate" TEXT'
   );
+
+  console.log('\n📄 Before (governorate only):');
+  const before = await prisma.$queryRawUnsafe(
+    'SELECT "id", "residenceGovernorate", "currentLat", "currentLng", "isAvailable", "verificationStatus" FROM "DriverProfile" WHERE "userId" = $1',
+    target.id
+  );
+  console.log(JSON.stringify(before[0], null, 2));
+
+  await prisma.$executeRawUnsafe(
+    'UPDATE "DriverProfile" SET "residenceGovernorate" = $1 WHERE "userId" = $2',
+    gov,
+    target.id
+  );
+
+  console.log('\n✅ After (only residenceGovernorate changed):');
+  const after = await prisma.$queryRawUnsafe(
+    'SELECT "id", "residenceGovernorate", "currentLat", "currentLng", "isAvailable", "verificationStatus" FROM "DriverProfile" WHERE "userId" = $1',
+    target.id
+  );
+  console.log(JSON.stringify(after[0], null, 2));
 
   await prisma.$disconnect();
 }
