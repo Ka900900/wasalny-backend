@@ -43,6 +43,32 @@ function getKashierHeaders() {
 }
 
 /**
+ * تطبيع رقم الهاتف المصري لكاشير
+ * يحول: +2010... أو 2010... أو 10... → 01xxxxxxxxx
+ */
+function normalizeEgyptianPhone(phone) {
+  if (!phone) return undefined;
+
+  let cleaned = String(phone).replace(/[\s\-\(\)]/g, '');
+
+  if (cleaned.startsWith('+20')) {
+    cleaned = cleaned.slice(3);
+  } else if (cleaned.startsWith('20') && cleaned.length >= 12) {
+    cleaned = cleaned.slice(2);
+  }
+
+  if (/^1[0125]\d{8}$/.test(cleaned)) {
+    cleaned = '0' + cleaned;
+  }
+
+  if (/^01[0125]\d{8}$/.test(cleaned)) {
+    return cleaned;
+  }
+
+  return String(phone).replace(/[\s\-\(\)]/g, '');
+}
+
+/**
  * Create a Kashier Payment Session (Payment Sessions API v3).
  *
  * @param {string} orderId      معرّف الطلب الفريد (يُستخدم لاحقاً في الاستعلام)
@@ -117,7 +143,7 @@ async function createKashierSession(orderId, amount, description, paymentMethod,
       reference: customer?.id || customer?.firebaseUid || undefined,
       name: `${customer?.firstName || ''} ${customer?.lastName || ''}`.trim() || 'Wasalny User',
       email: customer?.email || undefined,
-      phone: customer?.phoneNumber || undefined,
+      phone: normalizeEgyptianPhone(customer?.phoneNumber),
     },
   };
 
