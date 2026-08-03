@@ -511,6 +511,191 @@ async function createAdminMessageHandler(req, res) {
   }
 }
 
+// ── Admin: قائمة تذاكر الدعم (مع الحالة + آخر رسالة + pagination) ──
+async function listAdminTicketsHandler(req, res) {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const { status } = req.query;
+    const allowed = ['OPEN', 'IN_PROGRESS', 'WAITING_ON_USER', 'RESOLVED', 'CLOSED'];
+    const where = status && allowed.includes(status) ? { status } : {};
+
+    const total = await prisma.supportTicket.count({ where });
+
+    const tickets = await prisma.supportTicket.findMany({
+      where,
+      orderBy: { updatedAt: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit,
+      include: {
+        user: { select: { id: true, firstName: true, lastName: true, role: true, phoneNumber: true } },
+        messages: { orderBy: { createdAt: 'desc' }, take: 1 },
+        _count: { select: { messages: true } },
+      },
+    });
+
+    res.json({
+      tickets: tickets.map((t) => {
+        const last = t.messages?.[0];
+        return {
+          id: t.id,
+          subject: t.subject,
+          status: t.status,
+          rideId: t.rideId,
+          createdAt: t.createdAt.toISOString(),
+          updatedAt: t.updatedAt.toISOString(),
+          user: t.user
+            ? {
+                id: t.user.id,
+                name: `${t.user.firstName || ''} ${t.user.lastName || ''}`.trim() || '—',
+                role: t.user.role,
+                phoneNumber: t.user.phoneNumber,
+              }
+            : null,
+          lastMessage: last?.text || '',
+          lastSenderType: last?.senderType || null,
+          lastAt: last?.createdAt?.toISOString() || null,
+          messageCount: t._count?.messages ?? 0,
+        };
+      }),
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'خطأ في جلب تذاكر الدعم' });
+  }
+}
+
+// ── Admin: تحديث حالة تذكرة ──
+async function updateTicketStatusHandler(req, res) {
+  try {
+    const { id } = req.params;
+    const { status } = req.body || {};
+    const allowed = ['OPEN', 'IN_PROGRESS', 'WAITING_ON_USER', 'RESOLVED', 'CLOSED'];
+    if (!status || !allowed.includes(status)) {
+      return res.status(400).json({ error: 'حالة غير صالحة' });
+    }
+
+    const ticket = await prisma.supportTicket.findUnique({ where: { id } });
+    if (!ticket) return res.status(404).json({ error: 'التذكرة غير موجودة' });
+
+    const updated = await prisma.supportTicket.update({
+      where: { id },
+      data: { status },
+      include: { user: { select: { id: true, firstName: true, lastName: true, role: true, phoneNumber: true } } },
+    });
+
+    res.json({
+      id: updated.id,
+      subject: updated.subject,
+      status: updated.status,
+      rideId: updated.rideId,
+      createdAt: updated.createdAt.toISOString(),
+      updatedAt: updated.updatedAt.toISOString(),
+      user: updated.user
+        ? {
+            id: updated.user.id,
+            name: `${updated.user.firstName || ''} ${updated.user.lastName || ''}`.trim() || '—',
+            role: updated.user.role,
+            phoneNumber: updated.user.phoneNumber,
+          }
+        : null,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'خطأ في تحديث حالة التذكرة' });
+  }
+}
+
+// ── Admin: رسائل تذكرة محددة ──
+async function getAdminTicketMessagesHandler(req, res) {
+  try {
+    const { id } = req.params;
+    const ticket = await prisma.supportTicket.findUnique({
+      where: { id },
+      include: {
+        user: { select: { id: true, firstName: true, lastName: true, role: true } },
+        messages: { orderBy: { createdAt: 'asc' } },
+      },
+    });
+    if (!ticket) return res.status(404).json({ error: 'التذكرة غير موجودة' });
+
+    res.json({
+      ticket: {
+        id: ticket.id,
+        subject: ticket.subject,
+        status: ticket.status,
+        rideId: ticket.rideId,
+        createdAt: ticket.createdAt.toISOString(),
+        updatedAt: ticket.updatedAt.toISOString(),
+        user: ticket.user
+          ? {
+              id: ticket.user.id,
+              name: `${ticket.user.firstName || ''} ${ticket.user.lastName || ''}`.trim() || '—',
+              role: ticket.user.role,
+            }
+          : null,
+      },
+      messages: ticket.messages.map((m) => ({
+        id: m.id,
+        senderType: m.senderType,
+        text: m.text,
+        createdAt: m.createdAt.toISOString(),
+      })),
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'خطأ في جلب رسائل التذكرة' });
+  }
+}
+
+// ── Admin: رد على تذكرة محددة (بدور ADMIN) ──
+async function createAdminTicketMessageHandler(req, res) {
+  try {
+    const { id } = req.params;
+    const { text } = req.body || {};
+    if (typeof text !== 'string' || text.trim() === '') {
+      return res.status(400).json({ error: 'نص الرسالة مطلوب' });
+    }
+
+    const ticket = await prisma.supportTicket.findUnique({ where: { id } });
+    if (!ticket) return res.status(404).json({ error: 'التذكرة غير موجودة' });
+
+    const result = await prisma.$transaction(async (tx) => {
+      const newMessage = await tx.supportMessage.create({
+        data: {
+          ticketId: ticket.id,
+          userId: ticket.userId,
+          senderType: 'ADMIN',
+          text: text.trim(),
+        },
+      });
+      await tx.supportTicket.update({
+        where: { id: ticket.id },
+        data: {
+          updatedAt: new Date(),
+          // إعادة فتح التذكرة تلقائيًا عند الرد لو كانت مغلقة
+          ...(ticket.status === 'RESOLVED' || ticket.status === 'CLOSED'
+            ? { status: 'IN_PROGRESS' }
+            : {}),
+        },
+      });
+      return newMessage;
+    });
+
+    res.status(201).json({
+      id: result.id,
+      ticketId: result.ticketId,
+      senderType: result.senderType,
+      text: result.text,
+      createdAt: result.createdAt.toISOString(),
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'خطأ أثناء إرسال الرد' });
+  }
+}
+
 module.exports = {
   // New ticket-based handlers
   getFAQsHandler,
@@ -525,4 +710,9 @@ module.exports = {
   listConversationsHandler,
   getAdminUserMessagesHandler,
   createAdminMessageHandler,
+  // Admin ticket-based handlers
+  listAdminTicketsHandler,
+  updateTicketStatusHandler,
+  getAdminTicketMessagesHandler,
+  createAdminTicketMessageHandler,
 };

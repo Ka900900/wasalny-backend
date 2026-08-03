@@ -17,12 +17,17 @@ const {
   listRecentRidesHandler,
   getAnalyticsHandler,
   getEarningsHandler,
+  listRatingsHandler,
 } = require('../controllers/admin.controller');
 const { rejectCaptainSchema } = require('../validators/admin.validator');
 const {
   listConversationsHandler,
   getAdminUserMessagesHandler,
   createAdminMessageHandler,
+  listAdminTicketsHandler,
+  updateTicketStatusHandler,
+  getAdminTicketMessagesHandler,
+  createAdminTicketMessageHandler,
 } = require('../controllers/support.controller');
 
 // كل المسارات مخصصة للأدمن فقط
@@ -32,6 +37,7 @@ router.get('/stats', authenticateToken, requireRole('ADMIN'), getAdminStatsHandl
 router.get('/rides', authenticateToken, requireRole('ADMIN'), listRecentRidesHandler);
 router.get('/analytics', authenticateToken, requireRole('ADMIN'), getAnalyticsHandler);
 router.get('/earnings', authenticateToken, requireRole('ADMIN'), getEarningsHandler);
+router.get('/ratings', authenticateToken, requireRole('ADMIN'), listRatingsHandler);
 
 router.get('/withdrawals', authenticateToken, requireRole('ADMIN'), listWithdrawalsHandler);
 router.patch('/withdrawals/:id/approve', authenticateToken, requireRole('ADMIN'), approveWithdrawalHandler);
@@ -42,6 +48,12 @@ router.patch('/withdrawals/:id/complete', authenticateToken, requireRole('ADMIN'
 router.get('/support/conversations', authenticateToken, requireRole('ADMIN'), listConversationsHandler);
 router.get('/support/messages/:userId', authenticateToken, requireRole('ADMIN'), getAdminUserMessagesHandler);
 router.post('/support/messages/:userId', authenticateToken, requireRole('ADMIN'), createAdminMessageHandler);
+
+// مسارات تذاكر الدعم (مخصصة للأدمن) — ticket-based
+router.get('/support/tickets', authenticateToken, requireRole('ADMIN'), listAdminTicketsHandler);
+router.get('/support/tickets/:id/messages', authenticateToken, requireRole('ADMIN'), getAdminTicketMessagesHandler);
+router.post('/support/tickets/:id/messages', authenticateToken, requireRole('ADMIN'), createAdminTicketMessageHandler);
+router.patch('/support/tickets/:id/status', authenticateToken, requireRole('ADMIN'), updateTicketStatusHandler);
 
 // ═══════════════════════════════════════════════════════
 //  مسارات توثيق الكباتن (Captain Verification)

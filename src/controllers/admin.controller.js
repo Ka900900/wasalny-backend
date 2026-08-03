@@ -501,6 +501,98 @@ async function getEarningsHandler(req, res) {
   }
 }
 
+// ── GET /api/v1/admin/ratings?page=&limit=&minRating=&maxRating=&captainId=&from=&to= ──
+// قائمة تقييمات مع فلترة + pagination + summary (متوسط/توزيع النجوم).
+async function listRatingsHandler(req, res) {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const minRating = parseInt(req.query.minRating, 10);
+    const maxRating = parseInt(req.query.maxRating, 10);
+    const { captainId } = req.query;
+
+    const where = {};
+
+    if (!Number.isNaN(minRating) && minRating >= 1 && minRating <= 5) {
+      where.rating = { gte: minRating };
+    }
+    if (!Number.isNaN(maxRating) && maxRating >= 1 && maxRating <= 5) {
+      where.rating = { ...(where.rating || {}), lte: maxRating };
+    }
+    if (captainId) where.toUserId = captainId;
+
+    const from = req.query.from ? new Date(req.query.from) : null;
+    const to = req.query.to ? new Date(req.query.to) : null;
+    if (from && !Number.isNaN(from.getTime())) {
+      where.createdAt = { ...(where.createdAt || {}), gte: from };
+    }
+    if (to && !Number.isNaN(to.getTime())) {
+      where.createdAt = { ...(where.createdAt || {}), lt: to };
+    }
+
+    // إحصائيات (تحترم الفلاتر وتتجاهل pagination)
+    const [total, aggregate, grouped] = await Promise.all([
+      prisma.rating.count({ where }),
+      prisma.rating.aggregate({ where, _avg: { rating: true }, _count: { _all: true } }),
+      prisma.rating.groupBy({ by: ['rating'], where, _count: { _all: true } }),
+    ]);
+
+    const distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    for (const g of grouped) {
+      if (distribution[g.rating] !== undefined) distribution[g.rating] = g._count._all;
+    }
+
+    const ratings = await prisma.rating.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit,
+      include: {
+        fromUser: { select: { id: true, firstName: true, lastName: true, role: true, phoneNumber: true } },
+        toUser: { select: { id: true, firstName: true, lastName: true, role: true, phoneNumber: true } },
+      },
+    });
+
+    const fmtUser = (u) =>
+      u
+        ? {
+            id: u.id,
+            name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || '—',
+            role: u.role,
+            phoneNumber: u.phoneNumber,
+          }
+        : null;
+
+    res.json({
+      ratings: ratings.map((r) => ({
+        id: r.id,
+        rating: r.rating,
+        comment: r.comment,
+        createdAt: r.createdAt.toISOString(),
+        rideId: r.rideId,
+        fromUser: fmtUser(r.fromUser),
+        toUser: fmtUser(r.toUser),
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+      summary: {
+        averageRating: aggregate._avg.rating ? Number(Number(aggregate._avg.rating).toFixed(2)) : 0,
+        totalRatings: aggregate._count._all,
+        fiveStarCount: distribution[5],
+        lowRatingCount: distribution[1] + distribution[2],
+        distribution,
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'خطأ في جلب التقييمات' });
+  }
+}
+
 module.exports = {
   listWithdrawalsHandler,
   approveWithdrawalHandler,
@@ -515,4 +607,5 @@ module.exports = {
   listRecentRidesHandler,
   getAnalyticsHandler,
   getEarningsHandler,
+  listRatingsHandler,
 };
