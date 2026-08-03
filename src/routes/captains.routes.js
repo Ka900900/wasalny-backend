@@ -80,7 +80,8 @@ router.put('/ride/complete/:rideId', authenticateToken, requireRole('CAPTAIN'), 
  *       200:
  *         description: Earnings data
  */
-router.get('/earnings', authenticateToken, requireRole('CAPTAIN'), getEarningsHandler);
+// نسمح بالدورين CAPTAIN و DRIVER لأن بعض المستخدمين role=DRIVER في الـ schema
+router.get('/earnings', authenticateToken, requireRole('CAPTAIN', 'DRIVER'), getEarningsHandler);
 router.get('/ratings', authenticateToken, requireRole('CAPTAIN'), getDriverRatingsHandler);
 
 /**

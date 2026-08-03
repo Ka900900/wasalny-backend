@@ -29,6 +29,16 @@ function getKashierBaseUrl() {
 }
 
 /**
+ * يختار بيئة FEP (Front-End Platform) الخاصة بـ R2P (Request to Pay):
+ *   LIVE : https://fep.kashier.io
+ *   TEST : https://test-fep.kashier.io
+ */
+function getKashierFepBaseUrl() {
+  const mode = (process.env.KASHIER_MODE || 'live').toLowerCase();
+  return mode === 'test' ? 'https://test-fep.kashier.io' : 'https://fep.kashier.io';
+}
+
+/**
  * يبني ترويسات المصادقة الرسمية لـ v3:
  *   Authorization: <KASHIER_SECRET_KEY>   (السر، وليس Bearer)
  *   api-key: <KASHIER_API_KEY>
@@ -355,9 +365,12 @@ async function queryKashierTransaction(id) {
  */
 
 /**
- * يولّد توقيع HMAC-SHA256 للدفع المباشر بالمحفظة.
+ * يولّد توقيع HMAC-SHA256 (Kashier-Hash) للدفع بالمحفظة.
  * الصيغة: "mid={mid}&orderId={orderId}&amount={amount}&currency={currency}"
- * (بعض إصدارات Kashier تتضمن walletPhoneNumber في الـ payload)
+ *
+ * ملاحظة (افتراض موثّق): لا يوجد توثيق رسمي في المشروع لصيغة hash الخاصة
+ * بـ R2P، لذا نستخدم نفس منطق HMAC الموجود. إن تطلّبت Kashier حقولاً
+ * إضافية في الـ payload (مثل walletPhoneNumber أو apiOperation) يُعدَّل هنا فقط.
  */
 function generateWalletDirectHash(orderId, amount, currency = 'EGP') {
   const mid = process.env.KASHIER_MID;
@@ -367,11 +380,34 @@ function generateWalletDirectHash(orderId, amount, currency = 'EGP') {
   return crypto.createHmac('sha256', secret).update(payload).digest('hex');
 }
 
+/**
+ * الدفع المباشر عبر محفظة إلكترونية (R2P — Request to Pay) حسب التوثيق الرسمي لكاشير.
+ * Kashier Direct Wallet — R2P API:
+ *   LIVE: POST https://fep.kashier.io/v3/orders/
+ *   TEST: POST https://test-fep.kashier.io/v3/orders/
+ *
+ * @param {object} params
+ * @param {string} params.orderId          معرّف الطلب الداخلي (يُستخدم للحفظ في قاعدة البيانات)
+ * @param {number|string} params.amount    المبلغ
+ * @param {string} params.walletPhoneNumber رقم هاتف المحفظة (01xxxxxxxxx — بدون +20)
+ * @param {string} [params.walletType]     نوع المحفظة: 'vodafone_cash' | 'instapay' (اختياري)
+ * @param {string} [params.currency='EGP']
+ *
+ * @returns {{
+ *   success: boolean,
+ *   systemOrderId: string|null,
+ *   transactionId: string|null,
+ *   status: string,
+ *   orderReference: string,
+ *   message: string,
+ *   orderId: string,
+ *   amount: string,
+ *   currency: string,
+ * }}
+ */
 async function payWithWalletDirect({ orderId, amount, walletPhoneNumber, walletType, currency = 'EGP' }) {
   const mid = process.env.KASHIER_MID;
   const secretKey = process.env.KASHIER_SECRET_KEY;
-  const apiKey = process.env.KASHIER_API_KEY;
-  const mode = (process.env.KASHIER_MODE || 'live').toLowerCase();
   const appUrl = process.env.APP_URL || 'https://wasalny-backend-production.up.railway.app';
 
   // التحقق من صحة المبلغ
@@ -379,63 +415,72 @@ async function payWithWalletDirect({ orderId, amount, walletPhoneNumber, walletT
   if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
     throw new Error('المبلغ غير صالح: يجب أن يكون رقماً موجباً');
   }
-  const formattedAmount = numericAmount.toFixed(2);
 
-  // التحقق من رقم الهاتف
-  if (!walletPhoneNumber || !/^01[0-9]{9}$/.test(walletPhoneNumber.replace(/[^0-9]/g, ''))) {
+  // التحقق من رقم الهاتف وتطبيعه (إزالة +20 / 20 إذا وُجدت)
+  const cleanPhone = normalizeEgyptianPhone(walletPhoneNumber);
+  if (!cleanPhone || !/^01[0-9]{9}$/.test(cleanPhone)) {
     throw new Error('رقم الهاتف غير صالح: يجب أن يكون رقماً مصرياً صحيحاً (مثال: 01012345678)');
   }
-  const cleanPhone = walletPhoneNumber.replace(/[^0-9]/g, '');
 
   const missingConfig = [];
   if (!mid) missingConfig.push('KASHIER_MID');
   if (!secretKey) missingConfig.push('KASHIER_SECRET_KEY');
-  if (!apiKey) missingConfig.push('KASHIER_API_KEY');
   if (!appUrl) missingConfig.push('APP_URL');
   if (missingConfig.length) {
     throw new Error(`Kashier configuration missing: ${missingConfig.join(', ')}`);
   }
 
-  // توليد التوقيع
-  const hash = generateWalletDirectHash(orderId, formattedAmount, currency);
+  // مرجع الطلب الرسمي: PM-{timestamp}
+  const orderReference = `PM-${Date.now()}`;
 
-  // تحديد نوع المحفظة (افتراضي: vodafone_cash)
-  const wallet = (walletType || 'vodafone_cash').toLowerCase();
+  // ── Kashier-Hash ────────────────────────────────────────────────────
+  // نفس منطق HMAC الموجود (generateWalletDirectHash) مع مرجع الطلب.
+  // الافتراض موثّق في دالة generateWalletDirectHash.
+  const hash = generateWalletDirectHash(orderReference, numericAmount, currency);
 
+  // جسم الطلب الرسمي (INITIATE_R2P)
   const requestBody = {
+    apiOperation: 'INITIATE_R2P',
+    paymentMethod: { type: 'Wallet' },
+    order: {
+      reference: orderReference,
+      amount: numericAmount,
+      currency,
+    },
+    customer: {
+      mobileNumber: cleanPhone, // بدون +20
+    },
+    interactionSource: 'ECOMMERCE',
+    reconciliation: {
+      webhookUrl: `${appUrl}/api/webhooks/kashier`,
+    },
     merchantId: mid,
-    orderId,
-    amount: formattedAmount,
-    currency,
-    walletPhoneNumber: cleanPhone,
-    wallet,
-    hash,
-    serverWebhook: `${appUrl}/api/webhooks/kashier`,
-    metaData: { source: 'wasalny', orderId, paymentMethod: 'wallet', walletPhoneNumber: cleanPhone },
   };
 
-  // نقطة النهاية الخاصة بالدفع المباشر بالمحفظة (حسب توثيق Kashier)
-  const endpoint = `${getKashierBaseUrl()}/v3/payment/wallet/pay`;
+  // نقطة النهاية الرسمية حسب البيئة (Live/Test)
+  const endpoint = `${getKashierFepBaseUrl()}/v3/orders/`;
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'Kashier-Hash': hash,
+  };
 
   let response;
   try {
-    console.log('[Kashier] Direct Wallet POST request', {
+    console.log('[Kashier] R2P INITIATE request', {
       endpoint,
-      headers: { 'Content-Type': 'application/json', Authorization: '[REDACTED]', 'api-key': '[REDACTED]' },
-      body: { ...requestBody, hash: '[REDACTED]' },
+      headers: { 'Content-Type': 'application/json', 'Kashier-Hash': '[REDACTED]' },
+      body: requestBody,
     });
 
-    response = await axios.post(endpoint, requestBody, {
-      headers: getKashierHeaders(),
-      timeout: 30000,
-    });
+    response = await axios.post(endpoint, requestBody, { headers, timeout: 30000 });
 
-    console.log('[Kashier] Direct Wallet POST response', {
+    console.log('[Kashier] R2P INITIATE response', {
       status: response?.status,
       body: response?.data,
     });
   } catch (err) {
-    console.error('[Kashier] Direct Wallet POST failed', {
+    console.error('[Kashier] R2P INITIATE failed', {
       status: err.response?.status,
       body: err.response?.data,
     });
@@ -445,42 +490,125 @@ async function payWithWalletDirect({ orderId, amount, walletPhoneNumber, walletT
       err.response?.data?.error ||
       (typeof err.response?.data === 'string' ? err.response.data : null) ||
       err.message;
-    throw new Error(`Kashier direct wallet failed: ${kashierMsg}`);
+    throw new Error(`Kashier R2P init failed: ${kashierMsg}`);
   }
 
-  const data = response.data;
+  const data = response.data || {};
 
-  // حفظ جلسة الدفع في قاعدة البيانات
-  const sessionId = data?.sessionId || data?._id || `wallet_${orderId}`;
-  await prisma.paymentSession.upsert({
-    where: { orderId },
-    update: {
-      sessionId,
-      status: data?.status || 'PENDING_OTP',
-      paymentMethod: `wallet_${wallet}`,
-      amount: formattedAmount,
-      updatedAt: new Date(),
-    },
-    create: {
-      orderId,
-      sessionId,
-      status: data?.status || 'PENDING_OTP',
-      paymentMethod: `wallet_${wallet}`,
-      amount: formattedAmount,
-    },
-  });
-  console.log(`[Kashier] Direct wallet session saved: orderId=${orderId} → sessionId=${sessionId}`);
+  // ── الحقول المطلوبة من الرد ────────────────────────────────────────
+  const systemOrderId = data?.systemOrderId || data?.id || data?._id || null;
+  const transactionId = data?.transactionId || data?.transaction_id || null;
+  const status = data?.status || 'PENDING';
+
+  // حفظ جلسة الدفع في قاعدة البيانات (نحتفظ بالـ orderId الداخلي كمرجع)
+  const sessionId = systemOrderId || `r2p_${orderId}`;
+  try {
+    await prisma.paymentSession.upsert({
+      where: { orderId },
+      update: {
+        sessionId,
+        status,
+        paymentMethod: 'wallet_r2p',
+        amount: String(numericAmount),
+        updatedAt: new Date(),
+      },
+      create: {
+        orderId,
+        sessionId,
+        status,
+        paymentMethod: 'wallet_r2p',
+        amount: String(numericAmount),
+      },
+    });
+    console.log(`[Kashier] R2P session saved: orderId=${orderId} → systemOrderId=${systemOrderId}`);
+  } catch (dbErr) {
+    // فشل الحفظ لا يكسر عملية الدفع نفسها
+    console.error('[Kashier] Failed to save R2P session:', dbErr?.message || dbErr);
+  }
 
   return {
     success: true,
-    sessionId,
-    referenceNumber: data?.referenceNumber || data?.reference || null,
-    otpRequired: data?.otpRequired !== false, // افتراضي true
-    message: data?.message || 'تم إرسال طلب الدفع، يرجى تأكيد الـ OTP من هاتفك',
+    systemOrderId,
+    transactionId,
+    status,
+    orderReference,
+    message: data?.message || 'تم إرسال طلب الدفع، يرجى تأكيد الدفع من هاتفك',
     orderId,
-    amount: formattedAmount,
+    amount: String(numericAmount),
     currency,
-    status: data?.status || 'PENDING_OTP',
+  };
+}
+
+/**
+ * طلب تسوية المحفظة (RECONCILE_WALLET) بعد نجاح دفع R2P.
+ * Kashier R2P — RECONCILE:
+ *   PUT https://fep.kashier.io/v3/orders/:systemOrderId
+ *
+ * @param {string} systemOrderId معرّف الطلب النظامي من كاشير (من رد INITIATE_R2P)
+ * @returns {{ success: boolean, status: string|null, systemOrderId: string, transactionId: string|null, message: string }}
+ */
+async function reconcileWallet(systemOrderId) {
+  if (!systemOrderId) {
+    throw new Error('systemOrderId مطلوب للتسوية');
+  }
+  const mid = process.env.KASHIER_MID;
+  const secretKey = process.env.KASHIER_SECRET_KEY;
+
+  if (!mid || !secretKey) {
+    throw new Error('Kashier configuration missing: KASHIER_MID / KASHIER_SECRET_KEY');
+  }
+
+  // ── Kashier-Hash ────────────────────────────────────────────────────
+  // نفس افتراض الـ hash الموثّق أعلاه، مع systemOrderId كمرجع.
+  const hash = generateWalletDirectHash(systemOrderId, 0, 'EGP');
+
+  const requestBody = {
+    apiOperation: 'RECONCILE_WALLET',
+    paymentMethod: { type: 'Wallet' },
+    merchantId: mid,
+  };
+
+  const endpoint = `${getKashierFepBaseUrl()}/v3/orders/${encodeURIComponent(systemOrderId)}`;
+  const headers = {
+    'Content-Type': 'application/json',
+    'Kashier-Hash': hash,
+  };
+
+  let response;
+  try {
+    console.log('[Kashier] R2P RECONCILE request', {
+      endpoint,
+      headers: { 'Content-Type': 'application/json', 'Kashier-Hash': '[REDACTED]' },
+      body: requestBody,
+    });
+
+    response = await axios.put(endpoint, requestBody, { headers, timeout: 30000 });
+
+    console.log('[Kashier] R2P RECONCILE response', {
+      status: response?.status,
+      body: response?.data,
+    });
+  } catch (err) {
+    console.error('[Kashier] R2P RECONCILE failed', {
+      status: err.response?.status,
+      body: err.response?.data,
+    });
+
+    const kashierMsg =
+      err.response?.data?.message ||
+      err.response?.data?.error ||
+      (typeof err.response?.data === 'string' ? err.response.data : null) ||
+      err.message;
+    throw new Error(`Kashier R2P reconcile failed: ${kashierMsg}`);
+  }
+
+  const data = response.data || {};
+  return {
+    success: true,
+    status: data?.status || data?.transactionStatus || null,
+    systemOrderId,
+    transactionId: data?.transactionId || data?.transaction_id || null,
+    message: data?.message || 'تمت تسوية المحفظة بنجاح',
   };
 }
 
@@ -676,4 +804,6 @@ module.exports = {
   verifyWebhookSignature,
   payWithWalletDirect,
   payWithCardDirect,
+  reconcileWallet,
+  generateWalletDirectHash,
 };

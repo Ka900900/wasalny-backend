@@ -155,6 +155,10 @@ const authController = require('./controllers/auth.controller');
 app.post('/api/v1/auth/register-fcm-token', authenticateToken, authController.registerFcmToken);
 app.use('/api/v1/user', usersRoutes);
 app.use('/api/v1/captain', captainsRoutes);
+// Aliases للتطبيق: أي مسار ممكن يستدعيه تطبيق الكابتن يشتغل (fix 404 الأرباح)
+// /api/v1/captain/earnings و /api/v1/driver/earnings و /api/v1/captains/earnings
+app.use('/api/v1/driver', captainsRoutes);
+app.use('/api/v1/captains', captainsRoutes);
 app.use('/api/v1/rides', ridesRoutes);
 app.use('/api/v1/wallet', walletRoutes);
 app.use('/api/v1/admin', adminRoutes);

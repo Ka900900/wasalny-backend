@@ -5,13 +5,14 @@
  * (لا يغيّر الاسم / الهاتف / الحالة / المحفظة ... إلخ).
  *
  * الاستخدام:
- *   node --env-file="G:\waslny_backend\.env" "G:\waslny_backend\scripts\set-captain-location.js" "+201066702477"
+ *   node --env-file="G:\waslny_backend\.env" "G:\waslny_backend\scripts\set-captain-location.js" "+201066702477" [lat] [lng]
  */
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-const TARGET_LAT = 30.0444; // وسط القاهرة
-const TARGET_LNG = 31.2357;
+// الإحداثيات تُؤخذ من الوسائط إن وُجدت (lat lng)، وإلا تستخدم الافتراضية
+const TARGET_LAT = parseFloat(process.argv[3]) || 30.0444;
+const TARGET_LNG = parseFloat(process.argv[4]) || 31.2357;
 
 /** يولّد الصيغ الممكنة لرقم هاتف مصري (مع +20 / بدون / بادئ بـ 0 ...) */
 function candidatePhones(raw) {
