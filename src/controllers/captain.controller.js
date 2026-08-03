@@ -6,7 +6,7 @@ const { uploadToCloudinary } = require('../services/upload.service'); // تأك�
 
 async function updateLocationHandler(req, res, io) {
   try {
-    const updatedProfile = await updateLocation(req.user.userId, req.body.lat, req.body.lng);
+    const updatedProfile = await updateLocation(req.user.userId, req.body.lat, req.body.lng, req.body.residenceGovernorate);
 
     const activeRides = await prisma.rideRequest.findMany({
       where: { driverId: req.user.userId, status: { in: ['ACCEPTED', 'STARTED'] } },

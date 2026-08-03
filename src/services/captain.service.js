@@ -1,10 +1,10 @@
 const prisma = require('../config/prisma');
 const { Prisma } = require('@prisma/client');
-const { haversineDistance } = require('../services/geo');
+const { haversineDistance, getGovernorateFromCoords } = require('../services/geo');
 const { getCommissionRate, settleRide, syncRideStatusToFirestore, createChatRoom } = require('./ride.service');
 const { assertCanAcceptRides } = require('../config/wallet.constants');
 
-async function updateLocation(userId, lat, lng) {
+async function updateLocation(userId, lat, lng, residenceGovernorate) {
   // ── حارس التوثيق: لا يمكن للكابتن المعلق/المرفوض تحديث موقعه أو الظهور كمتاح ──
   const existingProfile = await prisma.driverProfile.findUnique({ where: { userId } });
   if (existingProfile && existingProfile.verificationStatus !== 'APPROVED') {
@@ -18,13 +18,30 @@ async function updateLocation(userId, lat, lng) {
     throw new Error('برجاء تسجيل بيانات المركبة أولاً قبل تفعيل حالة التوفر');
   }
 
+  // تحديد المحافظة السكنية:
+  //  - القيمة المرسلة صراحةً من التطبيق لها الأولوية.
+  //  - عند إنشاء الملف لأول مرة (تسجيل كابتن جديد) تُحدَّد تلقائيًا من الإحداثيات.
+  //  - عند التحديث فقط (بدون إرسال قيمة) تبقى المحافظة الحالية دون تغيير.
+  const explicitGov = typeof residenceGovernorate === 'string' ? residenceGovernorate.trim() : '';
+  const isNewProfile = !existingProfile;
+  const governorate = explicitGov
+    ? explicitGov
+    : isNewProfile
+      ? getGovernorateFromCoords(lat, lng)
+      : undefined;
+
   return prisma.driverProfile.upsert({
     where: { userId },
-    update: { currentLat: lat, currentLng: lng },
+    update: {
+      currentLat: lat,
+      currentLng: lng,
+      ...(governorate ? { residenceGovernorate: governorate } : {}),
+    },
     create: {
       userId,
       currentLat: lat,
       currentLng: lng,
+      ...(governorate ? { residenceGovernorate: governorate } : {}),
       carModel: `${vehicle.make} ${vehicle.model}`,
       carColor: vehicle.color,
       carPlateNumber: vehicle.plateNumber,

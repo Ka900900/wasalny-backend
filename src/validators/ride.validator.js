@@ -36,6 +36,10 @@ const updateLocationSchema = {
     lng: Joi.number().min(-180).max(180).required().messages({
       'any.required': 'خط الطول مطلوب',
     }),
+    // المحافظة السكنية (اختياري من التطبيق — تُحدَّد تلقائيًا من الإحداثيات إن لم تُرسل)
+    residenceGovernorate: Joi.string().trim().max(50).optional().allow('').messages({
+      'string.max': 'اسم المحافظة طويل جدًا',
+    }),
   }),
 };
 
