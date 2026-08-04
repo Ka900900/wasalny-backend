@@ -104,10 +104,10 @@ const generalLimiter = rateLimit({
 app.use(cors());
 app.use(generalLimiter);
 
-// التقاط Raw Body لمسار Webhook كاشير قبل أن يستهلكه express.json()
+// التقاط Raw Body لمسارات Webhook كاشير قبل أن يستهلكه express.json()
 // لأن webhook يحتاج الجسم الخام للتحقق من التوقيع (HMAC-SHA256)
-// نستخدم express.raw() كـ middleware مخصص لهذا المسار ثم نخزنه في req.rawBody
-app.use('/api/webhooks/kashier', express.raw({ type: '*/*' }), (req, res, next) => {
+// نستخدم express.raw() كـ middleware مخصص لهذين المسارين ثم نخزنه في req.rawBody
+app.use(['/api/webhooks/kashier', '/api/v1/wallet/kashier-webhook'], express.raw({ type: '*/*' }), (req, res, next) => {
   if (Buffer.isBuffer(req.body)) {
     req.rawBody = req.body.toString('utf8');
   } else if (typeof req.body === 'string') {
@@ -1785,7 +1785,7 @@ app.get('/api/v1/user/ratings/:userId', authenticateToken, async (req, res) => {
  *       200:
  *         description: Webhook processed
  */
-app.post('/api/webhooks/kashier', async (req, res) => {
+async function handleKashierWebhook(req, res) {
   try {
     const signature = req.headers['x-kashier-signature'];
     if (!signature) return res.status(400).send('Missing signature');
@@ -1798,7 +1798,7 @@ app.post('/api/webhooks/kashier', async (req, res) => {
       return res.status(400).send('Missing body');
     }
 
-    console.log('[Webhook] Received payload (signature redacted)');
+    console.log(`[Webhook] Received payload on ${req.originalUrl} (signature redacted)`);
 
     if (!verifyWebhookSignature(payload, signature)) {
       console.error('[Webhook] ❌ Invalid signature');
@@ -1892,7 +1892,10 @@ app.post('/api/webhooks/kashier', async (req, res) => {
     console.error('[Webhook] Error:', error);
     res.status(500).send('Internal error');
   }
-});
+}
+
+app.post('/api/v1/wallet/kashier-webhook', handleKashierWebhook);
+app.post('/api/webhooks/kashier', handleKashierWebhook);
 
 // Payment callback page
 app.get('/payment/callback', (req, res) => {

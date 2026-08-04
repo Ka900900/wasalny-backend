@@ -120,7 +120,7 @@ async function createKashierSession(orderId, amount, description, paymentMethod,
   }
 
   const merchantRedirect = `${appUrl}/api/v1/wallet/kashier-callback?orderId=${orderId}`;
-  const serverWebhook = `${appUrl}/api/webhooks/kashier`;
+  const serverWebhook = buildKashierWebhookUrl(appUrl);
 
   // خريطة طريقة الدفع → الـ allowedMethods المقبولة من Kashier
   // card      → بطاقة ائتمان/خصم فقط
@@ -236,6 +236,11 @@ function generateKashierCheckoutHash(orderId, amount, currency = 'EGP') {
   const formattedAmount = Number(amount).toFixed(2);
   const payload = `mid=${mid}&orderId=${orderId}&amount=${formattedAmount}&currency=${currency}`;
   return crypto.createHmac('sha256', secret).update(payload).digest('hex');
+}
+
+function buildKashierWebhookUrl(baseUrl) {
+  const normalizedBase = String(baseUrl || '').replace(/\/$/, '');
+  return `${normalizedBase}/api/v1/wallet/kashier-webhook`;
 }
 
 function isTopupOrderId(orderId) {
@@ -823,4 +828,5 @@ module.exports = {
   generateWalletDirectHash,
   isTopupOrderId,
   extractTopupUserId,
+  buildKashierWebhookUrl,
 };
