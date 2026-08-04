@@ -123,7 +123,7 @@ async function getWithdraws(userId) {
 
 /**
  * يتحقق من صحة مبلغ الشحن حسب سياسة محفظة الكابتن:
- * - أقل مبلغ شحن: CAPTAIN_MIN_TOPUP (50 ج)
+ * - أقل مبلغ شحن: CAPTAIN_MIN_TOPUP (10 ج)
  * - أقصى رصيد في المحفظة: CAPTAIN_MAX_BALANCE (1500 ج)
  * - الشحن متاح حتى لو كان الرصيد سالباً أو صفراً.
  * @param {string} userId
