@@ -1,5 +1,5 @@
 const { getWalletBalance, getTransactions, requestWithdrawal, getWithdraws, topUpWallet, validateTopUp, listPaymentMethods, addPaymentMethod, deletePaymentMethod, setDefaultPaymentMethod } = require('../services/wallet.service');
-const { createKashierSession, queryKashierTransaction, payWithWalletDirect, payWithCardDirect } = require('../services/kashier');
+const { createKashierSession, queryKashierTransaction, payWithWalletDirect, payWithCardDirect, isTopupOrderId, extractTopupUserId } = require('../services/kashier');
 const prisma = require('../config/prisma');
 const { getWalletLimits, DEFAULT_LIMITS } = require('../config/wallet.constants');
 
@@ -269,10 +269,17 @@ async function kashierCallbackHandler(req, res) {
           <p style="text-align:center;">لم يتم تأكيد العملية، يرجى المحاولة مرة أخرى.</p>`);
     }
 
-    // كاشير v3 بيرجّع sessionId في الـ redirect بدون status واضح —
-    // نعتمد على الاستعلام server-side لتأكيد نجاح الدفع بدل الثقة في الـ query.
-    const remote = await queryKashierTransaction(resolvedOrderId);
+    let remote = await queryKashierTransaction(resolvedOrderId);
+    let credited = false;
     if (!remote?.paid) {
+      const stored = await prisma.paymentSession.findFirst({ where: { orderId: resolvedOrderId } });
+      if (stored?.sessionId) {
+        remote = await queryKashierTransaction(stored.sessionId);
+      }
+    }
+
+    if (!remote?.paid) {
+      console.log(`[KashierCallback] ❌ Not credited orderId=${resolvedOrderId} userId=${resolvedUserId} credited=no`);
       return res
         .status(402)
         .setHeader('Content-Type', 'text/html; charset=utf-8')
@@ -280,18 +287,18 @@ async function kashierCallbackHandler(req, res) {
           <p style="text-align:center;">يرجى المحاولة لاحقاً أو التواصل مع الدعم.</p>`);
     }
 
-    // منع الاحتساب المكرر لنفس العملية
     const already = await prisma.walletTransaction.findFirst({
       where: { type: 'TOPUP', metadata: { path: ['orderId'], equals: resolvedOrderId } },
     });
     if (already) {
+      credited = true;
+      console.log(`[KashierCallback] ✅ Already credited orderId=${resolvedOrderId} userId=${resolvedUserId} credited=yes`);
       return res
         .setHeader('Content-Type', 'text/html; charset=utf-8')
         .send(`<h1 style="color:green;text-align:center;margin-top:50px;">✅ تم شحن المحفظة بنجاح</h1>
           <p style="text-align:center;">تم تأكيد العملية مسبقاً.</p>`);
     }
 
-    // userId هنا قد يكون cuid أو firebaseUid — نحلّه لأول مستخدم مطابق
     const walletUser = await prisma.user.findFirst({
       where: { OR: [ { id: resolvedUserId }, { firebaseUid: resolvedUserId } ] },
     });
@@ -302,15 +309,12 @@ async function kashierCallbackHandler(req, res) {
         .send(`<h1 style="color:red;text-align:center;margin-top:50px;">❌ المستخدم غير موجود</h1>`);
     }
 
-    // حارس أقصى رصيد (دفاع إضافي بعد نجاح الدفع — يرفض إن تجاوز 1500 ج)
     const limits = await getWalletLimits();
     const existingWallet = await prisma.wallet.findUnique({
       where: { userId: walletUser.id },
     });
-    const currentBalance = existingWallet
-      ? parseFloat(existingWallet.balance.toString())
-      : 0;
-    const topUpAmount = remote.amount || 0;
+    const currentBalance = existingWallet ? parseFloat(existingWallet.balance.toString()) : 0;
+    const topUpAmount = Number(remote.amount || 0);
     if (currentBalance + topUpAmount > limits.CAPTAIN_MAX_BALANCE) {
       return res
         .status(400)
@@ -318,27 +322,28 @@ async function kashierCallbackHandler(req, res) {
         .send(`<h1 style="color:red;text-align:center;margin-top:50px;">❌ لا يمكن أن يتجاوز رصيد المحفظة ${limits.CAPTAIN_MAX_BALANCE} ج.م</h1>`);
     }
 
-    // عملية ذرية: تحديث الرصيد + تسجيل المعاملة في نفس Prisma transaction
     const { wallet } = await prisma.$transaction(async (tx) => {
       const w = await tx.wallet.upsert({
         where: { userId: walletUser.id },
-        update: { balance: { increment: remote.amount || 0 } },
-        create: { userId: walletUser.id, balance: remote.amount || 0 },
+        update: { balance: { increment: topUpAmount } },
+        create: { userId: walletUser.id, balance: topUpAmount },
       });
       await tx.walletTransaction.create({
         data: {
           walletId: w.id,
           type: 'TOPUP',
-          amount: remote.amount || 0,
+          amount: topUpAmount,
           balanceAfter: w.balance,
           description: 'شحن المحفظة عبر كاشير (Checkout)',
           status: 'COMPLETED',
-          metadata: { orderId: resolvedOrderId, method: 'kashier-checkout' },
+          metadata: { orderId: resolvedOrderId, method: 'kashier-checkout', sessionId: remote.sessionId || null },
         },
       });
       return { wallet: w };
     });
 
+    credited = true;
+    console.log(`[KashierCallback] ✅ Credited orderId=${resolvedOrderId} userId=${resolvedUserId} amount=${topUpAmount} newBalance=${wallet.balance} credited=yes`);
     res
       .setHeader('Content-Type', 'text/html; charset=utf-8')
       .send(`<h1 style="color:green;text-align:center;margin-top:50px;">✅ تم شحن المحفظة بنجاح</h1>
@@ -421,107 +426,95 @@ async function confirmTopUp(req, res) {
       return res.status(400).json({ error: 'معرّف الطلب (orderId) مطلوب' });
     }
 
-    // الاستعلام عن حالة الدفع من Kashier (server-side)
-    const paymentStatus = await queryKashierTransaction(orderId);
-
-    // البحث عن سجل PaymentSession
-    const paymentSession = await prisma.paymentSession.findUnique({
-      where: { orderId },
-    });
-
+    const paymentSession = await prisma.paymentSession.findUnique({ where: { orderId } });
     if (!paymentSession) {
       return res.status(404).json({ error: 'لم يتم العثور على جلسة الدفع' });
     }
 
-    // منع الشحن المزدوج
-    if (paymentSession.status === 'SUCCESS' || paymentSession.status === 'COMPLETED') {
-      return res.status(400).json({ error: 'تمت معالجة هذه العملية مسبقاً' });
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'المستخدم غير مصرح' });
     }
 
-    if (paymentStatus.paid) {
-      // نجاح الدفع
+    const topupUserId = extractTopupUserId(orderId) || userId;
+    const topupOrderId = orderId;
+
+    let paymentStatus = null;
+    let paymentStatusSource = 'db';
+    const paymentSessionId = sessionId || paymentSession.sessionId || null;
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const statusResult = await queryKashierTransaction(paymentSessionId || orderId);
+      if (statusResult?.paid || statusResult?.status) {
+        paymentStatus = statusResult;
+        paymentStatusSource = paymentSessionId ? 'kashier-session' : 'kashier-order';
+        break;
+      }
+      if (attempt === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+    }
+
+    const alreadyCredited = await prisma.walletTransaction.findFirst({
+      where: { type: 'TOPUP', metadata: { path: ['orderId'], equals: topupOrderId } },
+    });
+
+    if (alreadyCredited) {
+      console.log(`[ConfirmTopUp] ✅ Already credited orderId=${topupOrderId} userId=${topupUserId}`);
+      return res.json({ success: true, message: 'تمت معالجة هذه العملية مسبقاً', alreadyCredited: true });
+    }
+
+    if (paymentStatus?.paid) {
       const amount = Number(paymentSession.amount || paymentStatus.amount || 0);
       if (amount <= 0) {
         return res.status(400).json({ error: 'المبلغ غير صالح' });
       }
 
-      // تحديث سجل PaymentSession
-      await prisma.paymentSession.update({
-        where: { orderId },
-        data: {
-          status: 'SUCCESS',
-          paymentReference: paymentStatus.sessionId || null,
-          confirmedAt: new Date(),
-        },
-      });
-
-      // المستخدم مسجل الدخول بواسطة authenticateToken
-      const userId = req.user?.userId;
-      if (!userId) {
-        return res.status(401).json({ error: 'المستخدم غير مصرح' });
-      }
-
-      // حارس أقصى رصيد (دفاع إضافي بعد نجاح الدفع — يرفض إن تجاوز 1500 ج)
       const limits = await getWalletLimits();
-      const existingWallet = await prisma.wallet.findUnique({
-        where: { userId },
-      });
-      const currentBalance = existingWallet
-        ? parseFloat(existingWallet.balance.toString())
-        : 0;
+      const existingWallet = await prisma.wallet.findUnique({ where: { userId: topupUserId } });
+      const currentBalance = existingWallet ? parseFloat(existingWallet.balance.toString()) : 0;
       if (currentBalance + amount > limits.CAPTAIN_MAX_BALANCE) {
-        return res.status(400).json({
-          error: `لا يمكن أن يتجاوز رصيد المحفظة ${limits.CAPTAIN_MAX_BALANCE} ج.م`,
-        });
+        return res.status(400).json({ error: `لا يمكن أن يتجاوز رصيد المحفظة ${limits.CAPTAIN_MAX_BALANCE} ج.م` });
       }
 
-      // البحث عن المحفظة أو إنشائها — عملية ذرية
-      const wallet = await prisma.wallet.upsert({
-        where: { userId },
-        update: { balance: { increment: amount } },
-        create: { userId, balance: amount },
-      });
-
-      // تسجيل معاملة الشحن
-      await prisma.walletTransaction.create({
-        data: {
-          walletId: wallet.id,
-          type: 'TOPUP',
-          amount,
-          balanceAfter: wallet.balance,
-          status: 'COMPLETED',
-          description: 'شحن محفظة عبر Kashier',
-          metadata: {
-            orderId,
-            sessionId: paymentSession.sessionId,
-            paymentReference: paymentStatus.sessionId,
+      const wallet = await prisma.$transaction(async (tx) => {
+        const w = await tx.wallet.upsert({
+          where: { userId: topupUserId },
+          update: { balance: { increment: amount } },
+          create: { userId: topupUserId, balance: amount },
+        });
+        await tx.walletTransaction.create({
+          data: {
+            walletId: w.id,
+            type: 'TOPUP',
+            amount,
+            balanceAfter: w.balance,
+            status: 'COMPLETED',
+            description: 'شحن محفظة عبر Kashier',
+            metadata: {
+              orderId: topupOrderId,
+              sessionId: paymentSession.sessionId,
+              paymentReference: paymentStatus.sessionId || null,
+              confirmedBy: 'confirmTopUp',
+            },
           },
-        },
+        });
+        await tx.paymentSession.updateMany({
+          where: { orderId: topupOrderId },
+          data: { status: 'SUCCESS', paymentReference: paymentStatus.sessionId || null, confirmedAt: new Date(), updatedAt: new Date() },
+        });
+        return w;
       });
 
-      return res.json({
-        success: true,
-        message: 'تم شحن المحفظة بنجاح',
-        balance: Number(wallet.balance),
-        amount,
-      });
+      console.log(`[ConfirmTopUp] ✅ Credited orderId=${topupOrderId} userId=${topupUserId} amount=${amount} source=${paymentStatusSource} credited=yes`);
+      return res.json({ success: true, message: 'تم شحن المحفظة بنجاح', balance: Number(wallet.balance), amount });
     }
 
-    // فشل الدفع أو لم يكتمل
-    const failureReason = paymentStatus.status
-      ? `حالة الدفع: ${paymentStatus.status}`
-      : 'لم يكتمل الدفع';
+    const failureReason = paymentStatus?.status ? `حالة الدفع: ${paymentStatus.status}` : 'لم يكتمل الدفع';
+    await prisma.paymentSession.update({ where: { orderId }, data: { status: 'FAILED', failureReason, updatedAt: new Date() } });
 
-    await prisma.paymentSession.update({
-      where: { orderId },
-      data: { status: 'FAILED', failureReason },
-    });
-
-    return res.status(402).json({
-      success: false,
-      error: 'لم يكتمل الدفع',
-      failureReason,
-    });
+    console.log(`[ConfirmTopUp] ❌ Not credited orderId=${topupOrderId} userId=${topupUserId} amount=${paymentSession.amount || 0} source=${paymentStatusSource} credited=no reason=${failureReason}`);
+    return res.status(402).json({ success: false, error: 'لم يكتمل الدفع', failureReason });
   } catch (error) {
     console.error('Confirm topup error:', error);
     res.status(500).json({ error: error.message || 'حدث خطأ أثناء تأكيد الدفع' });

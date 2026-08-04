@@ -238,6 +238,21 @@ function generateKashierCheckoutHash(orderId, amount, currency = 'EGP') {
   return crypto.createHmac('sha256', secret).update(payload).digest('hex');
 }
 
+function isTopupOrderId(orderId) {
+  return typeof orderId === 'string' && orderId.trim().toLowerCase().startsWith('topup_');
+}
+
+function extractTopupUserId(orderId) {
+  if (!isTopupOrderId(orderId)) return null;
+  const trimmed = orderId.trim();
+  const firstUnderscore = trimmed.indexOf('_');
+  const lastUnderscore = trimmed.lastIndexOf('_');
+  if (firstUnderscore === -1 || lastUnderscore <= firstUnderscore) {
+    return null;
+  }
+  return trimmed.slice(firstUnderscore + 1, lastUnderscore);
+}
+
 /**
  * Verify a Kashier webhook signature (البيانات الخام + التوقيع من الترويسة).
  * يُستخدم في webhook الخاص بـ index.js.
@@ -806,4 +821,6 @@ module.exports = {
   payWithCardDirect,
   reconcileWallet,
   generateWalletDirectHash,
+  isTopupOrderId,
+  extractTopupUserId,
 };

@@ -14,7 +14,7 @@ const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 const { initSocket, emitRideStatus, emitDriverLocation, emitEtaUpdate, sendNotification, SocketEvents } = require('./config/socket');
 const { initChatSocket } = require('./sockets/chat.socket');
 const { initSupportSocket } = require('./sockets/support.socket');
-const { createKashierSession, verifyWebhookSignature, queryKashierTransaction } = require('./services/kashier');
+const { createKashierSession, verifyWebhookSignature, queryKashierTransaction, extractTopupUserId } = require('./services/kashier');
 const { initFirebase, verifyFirebaseToken } = require('./config/firebase');
 const { calculateDistance, calculateFare, estimateDuration, getPricePerKm, haversineDistance, isPeakHourNow } = require('./services/geo');
 const { settleRide } = require('./services/ride.service');
@@ -1806,11 +1806,10 @@ app.post('/api/webhooks/kashier', async (req, res) => {
     }
 
     const event = JSON.parse(payload);
-    console.log('[Webhook] Verified event:', JSON.stringify({ status: event.status, orderId: event.orderId, amount: event.amount, sessionId: event.sessionId }));
+    console.log('[Webhook] Verified event:', JSON.stringify({ status: event.status, orderId: event.orderId, amount: event.amount, sessionId: event.sessionId, eventId: event.id }));
 
     if (event.status !== 'PAID') return res.status(200).send('OK');
 
-    // كاشير v3 بيرجّع sessionId (_id) في الـ webhook — نربطه بـ orderId عبر جدول paymentSession
     let orderId = event.orderId || event.order;
     if (!orderId && (event.sessionId || event._id)) {
       const stored = await prisma.paymentSession.findFirst({
@@ -1823,27 +1822,24 @@ app.post('/api/webhooks/kashier', async (req, res) => {
       return res.status(200).send('OK');
     }
 
-    // شحن محفظة: orderId = topup_{userId}_{timestamp} (غير حساس لحالة الأحرف)
-    if (orderId.toLowerCase().startsWith('topup_')) {
-      // استخراج userId بشكل آمن: كل النص بين أول underscore وآخر underscore
-      const firstUnderscore = orderId.indexOf('_');
-      const lastUnderscore = orderId.lastIndexOf('_');
-      const userId = firstUnderscore !== -1 && lastUnderscore > firstUnderscore
-        ? orderId.slice(firstUnderscore + 1, lastUnderscore)
-        : orderId.split('_')[1];
+    const topupOrder = typeof orderId === 'string' && orderId.trim().toLowerCase().startsWith('topup_');
+    if (topupOrder) {
+      const normalizedOrderId = orderId.trim();
+      const userId = extractTopupUserId(normalizedOrderId);
       const amount = parseFloat(event.amount);
-      if (!userId || !amount || amount <= 0) return res.status(200).send('OK');
-
-      // منع الاحتساب المكرر لنفس العملية (idempotent)
-      const already = await prisma.walletTransaction.findFirst({
-        where: { type: 'TOPUP', metadata: { path: ['orderId'], equals: orderId } },
-      });
-      if (already) {
-        console.log(`[Webhook] ⏭️ Topup ${orderId} already credited`);
+      if (!userId || !amount || amount <= 0) {
+        console.log(`[Webhook] ⚠️ Invalid topup payload orderId=${normalizedOrderId} amount=${event.amount}`);
         return res.status(200).send('OK');
       }
 
-      // عملية ذرية: تحديث الرصيد + تسجيل المعاملة في نفس transaction
+      const already = await prisma.walletTransaction.findFirst({
+        where: { type: 'TOPUP', metadata: { path: ['orderId'], equals: normalizedOrderId } },
+      });
+      if (already) {
+        console.log(`[Webhook] ⏭️ Topup ${normalizedOrderId} already credited`);
+        return res.status(200).send('OK');
+      }
+
       const result = await prisma.$transaction(async (tx) => {
         const wallet = await tx.wallet.upsert({
           where: { userId },
@@ -1858,18 +1854,17 @@ app.post('/api/webhooks/kashier', async (req, res) => {
             balanceAfter: wallet.balance,
             description: 'شحن المحفظة عبر كاشير',
             status: 'COMPLETED',
-            metadata: { orderId },
+            metadata: { orderId: normalizedOrderId, sessionId: event.sessionId || event._id || null, paymentReference: event.id || null },
           },
         });
-        // تحديث حالة جلسة الدفع
         await tx.paymentSession.updateMany({
-          where: { orderId },
+          where: { orderId: normalizedOrderId },
           data: { status: 'PAID', updatedAt: new Date() },
         });
         return { wallet, txn };
       });
 
-      console.log(`[Webhook] ✅ Wallet topped up: user=${userId} amount=${amount} newBalance=${result.wallet.balance}`);
+      console.log(`[Webhook] ✅ Wallet topped up: orderId=${normalizedOrderId} user=${userId} amount=${amount} newBalance=${result.wallet.balance} credited=yes`);
       return res.status(200).send('OK');
     }
 
