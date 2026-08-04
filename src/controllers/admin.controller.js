@@ -21,6 +21,103 @@ async function listWithdrawalsHandler(req, res) {
   }
 }
 
+async function getAdminTopupsHandler(req, res) {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const { userId, from, to } = req.query;
+    const skip = (page - 1) * limit;
+
+    const where = { type: 'TOPUP' };
+    if (userId) {
+      where.wallet = { is: { userId } };
+    }
+
+    const createdAt = {};
+    if (from) {
+      const fromDate = new Date(from);
+      if (!Number.isNaN(fromDate.getTime())) createdAt.gte = fromDate;
+    }
+    if (to) {
+      const toDate = new Date(to);
+      if (!Number.isNaN(toDate.getTime())) createdAt.lt = toDate;
+    }
+    if (Object.keys(createdAt).length > 0) {
+      where.createdAt = createdAt;
+    }
+
+    const [total, transactions] = await Promise.all([
+      prisma.walletTransaction.count({ where }),
+      prisma.walletTransaction.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+        include: {
+          wallet: {
+            select: {
+              id: true,
+              userId: true,
+              user: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  phoneNumber: true,
+                  role: true,
+                },
+              },
+            },
+          },
+        },
+      }),
+    ]);
+
+    const topups = transactions.map((tx) => {
+      const user = tx.wallet?.user;
+      const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || '—';
+      return {
+        id: tx.id,
+        amount: Number(tx.amount.toString()),
+        description: tx.description,
+        status: tx.status,
+        createdAt: tx.createdAt.toISOString(),
+        balanceAfter: tx.balanceAfter ? Number(tx.balanceAfter.toString()) : null,
+        orderId: tx.metadata?.orderId || null,
+        user: {
+          id: user?.id || tx.wallet?.userId || null,
+          fullName,
+          phone: user?.phoneNumber || null,
+          role: user?.role || null,
+        },
+      };
+    });
+
+    const summary = topups.reduce(
+      (acc, tx) => {
+        acc.totalAmount += Number(tx.amount || 0);
+        acc.count += 1;
+        return acc;
+      },
+      { totalAmount: 0, count: 0 }
+    );
+
+    res.json({
+      topups,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+      summary,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'خطأ في جلب عمليات الشحن' });
+  }
+}
+
 async function approveWithdrawalHandler(req, res) {
   try {
     const w = await approveWithdrawal(req.params.id);
@@ -596,6 +693,7 @@ async function listRatingsHandler(req, res) {
 
 module.exports = {
   listWithdrawalsHandler,
+  getAdminTopupsHandler,
   approveWithdrawalHandler,
   rejectWithdrawalHandler,
   completeWithdrawalHandler,

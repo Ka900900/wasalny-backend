@@ -5,6 +5,7 @@ const { validate } = require('../middleware/validate');
 const { rejectWithdrawalSchema } = require('../validators/wallet.validator');
 const {
   listWithdrawalsHandler,
+  getAdminTopupsHandler,
   approveWithdrawalHandler,
   rejectWithdrawalHandler,
   completeWithdrawalHandler,
@@ -46,6 +47,7 @@ router.get('/earnings', authenticateToken, requireRole('ADMIN'), getEarningsHand
 router.get('/ratings', authenticateToken, requireRole('ADMIN'), listRatingsHandler);
 
 router.get('/withdrawals', authenticateToken, requireRole('ADMIN'), listWithdrawalsHandler);
+router.get('/wallet/topups', authenticateToken, requireRole('ADMIN'), getAdminTopupsHandler);
 router.patch('/withdrawals/:id/approve', authenticateToken, requireRole('ADMIN'), approveWithdrawalHandler);
 router.patch('/withdrawals/:id/reject', authenticateToken, requireRole('ADMIN'), validate(rejectWithdrawalSchema), rejectWithdrawalHandler);
 router.patch('/withdrawals/:id/complete', authenticateToken, requireRole('ADMIN'), completeWithdrawalHandler);
