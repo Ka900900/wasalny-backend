@@ -5,7 +5,8 @@ const { emitRideStatus, SocketEvents } = require('../config/socket');
 const { Prisma } = require('@prisma/client');
 const { notifyCaptainsNewRide } = require('./fcm.service');
 const userRepository = require('../repositories/user.repository');
-const { getWalletLimit, DEFAULT_LIMITS } = require('../config/wallet.constants');
+const { getWalletLimit, DEFAULT_LIMITS, assertCanAcceptRides } = require('../config/wallet.constants');
+const { getRidePolicyConfig } = require('../config/ride.policy');
 const { createAdminNotification } = require('./notification.service');
 
 // ── نظام العمولة مع دعم عرض الكباتن الأوائل (قابل للتعديل من Config) ──
@@ -331,16 +332,232 @@ async function createChatRoom(rideId, riderId, driverId) {
   }
 }
 
+/**
+ * قبول رحلة من كابتن — خصم العمولة فوراً من محفظة الكابتن.
+ * (سياسة 2026-08-05): عند القبول تُخصم العمولة (price × commissionRate)
+ * وتُسجَّل كحركة COMMISSION بمرحلة on_accept، ولا تُسترد عند إلغاء الكابتن.
+ * تُستدعى من مسار الكابتن (captain.service.acceptRide) ومن مسار الكابتن القديم
+ * (driver accept-ride في index.js) لضمان نفس السلوك المالي.
+ */
+async function acceptRide(userId, rideId) {
+  // حارس حد الدين قبل الدخول في المعاملة (رسالة واضحة للمستخدم)
+  await assertCanAcceptRides(userId);
+
+  return prisma.$transaction(async (tx) => {
+    const ride = await tx.rideRequest.findUnique({ where: { id: rideId } });
+    if (!ride) throw new Error('الرحلة غير موجودة');
+    if (ride.status !== 'PENDING') throw new Error('الرحلة لم تعد متاحة');
+
+    const rate = await getCommissionRate(userId);
+    const price = new Prisma.Decimal(ride.price);
+    const commission = price.mul(rate).toDecimalPlaces(2);
+    const driverEarning = price.minus(commission);
+
+    // حجز الرحلة ذرياً حتى لا يقبلها كابتنان معاً (يُلغى عند فشل المعاملة)
+    const claim = await tx.rideRequest.updateMany({
+      where: { id: ride.id, status: 'PENDING' },
+      data: { driverId: userId, status: 'ACCEPTED' },
+    });
+    if (claim.count === 0) throw new Error('الرحلة لم تعد متاحة');
+
+    // ضمان وجود محفظة الكابتن
+    let capWallet = await tx.wallet.findUnique({ where: { userId } });
+    if (!capWallet) {
+      capWallet = await tx.wallet.create({
+        data: { userId, balance: 0, reservedAmount: 0, pendingWithdraw: 0, totalEarned: 0, totalWithdrawn: 0 },
+      });
+    }
+
+    // خصم العمولة فوراً من محفظة الكابتن
+    const capNewBal = capWallet.balance.minus(commission);
+    const minBalance = await getWalletLimit('CAPTAIN_MIN_BALANCE', DEFAULT_LIMITS.CAPTAIN_MIN_BALANCE);
+    // لو الرصيد بعد الخصم أقل من حد الدين → ارفض القبول برسالة واضحة
+    if (capNewBal.lt(minBalance)) {
+      const err = new Error(
+        `لا يمكن قبول الرحلة: خصم عمولة ${commission.toString()} ج.م سيجعل رصيدك أقل من حد الدين (${Math.abs(minBalance)} ج). اشحن المحفظة أولاً`
+      );
+      err.code = 'WALLET_DEBT_LIMIT';
+      throw err;
+    }
+
+    await tx.wallet.update({ where: { id: capWallet.id }, data: { balance: capNewBal } });
+    await tx.walletTransaction.create({
+      data: {
+        walletId: capWallet.id,
+        type: 'COMMISSION',
+        amount: commission,
+        balanceAfter: capNewBal,
+        description: 'عمولة قبول الرحلة',
+        status: 'COMPLETED',
+        rideId: ride.id,
+        metadata: { phase: 'on_accept', rate: rate.toString() },
+      },
+    });
+    console.log(`💰 COMMISSION (on_accept) ${commission.toString()} ج.م خُصمت من محفظة الكابتن ${userId} للرحلة ${ride.id}`);
+
+    const updated = await tx.rideRequest.update({
+      where: { id: ride.id },
+      data: {
+        commission,
+        commissionRate: rate,
+        driverEarning,
+        acceptedAt: new Date(),
+        commissionDeductedAtAccept: true,
+      },
+      include: {
+        driver: { select: { id: true, firstName: true, lastName: true, phoneNumber: true, driverProfile: true } },
+      },
+    });
+
+    return updated;
+  });
+}
+
+/**
+ * يطبّق غرامة تأخير الراكب: خصم من محفظة الراكب + إضافة للكابتن.
+ * يُستدعى داخل معاملة، مع منع التكرار عبر الحارس في المستدعي.
+ * @param {import('@prisma/client').Prisma.TransactionClient} tx
+ * @param {object} ride
+ */
+async function _applyLateFee(tx, ride) {
+  const { RIDER_LATE_FEE } = await getRidePolicyConfig();
+  const fee = new Prisma.Decimal(RIDER_LATE_FEE);
+
+  // إضافة الغرامة لمحفظة الكابتن (دائماً — الكابتن انتظر)
+  const capWallet = await tx.wallet.findUnique({ where: { userId: ride.driverId } });
+  if (!capWallet) throw new Error('محفظة الكابتن غير موجودة');
+  const capNewBal = capWallet.balance.plus(fee);
+  await tx.wallet.update({
+    where: { id: capWallet.id },
+    data: { balance: capNewBal, totalEarned: { increment: fee } },
+  });
+  await tx.walletTransaction.create({
+    data: {
+      walletId: capWallet.id,
+      type: 'LATE_FEE_CREDIT',
+      amount: fee,
+      balanceAfter: capNewBal,
+      description: 'غرامة تأخير الراكب',
+      status: 'COMPLETED',
+      rideId: ride.id,
+      metadata: { rideId: ride.id, reason: 'rider_late' },
+    },
+  });
+
+  // خصم الغرامة من محفظة الراكب (لو موجودة ورصيدها كافٍ — وإلا تُسجَّل مستحقة)
+  let riderDebited = false;
+  const riderWallet = await tx.wallet.findUnique({ where: { userId: ride.riderId } });
+  if (riderWallet && riderWallet.balance.gte(fee)) {
+    const riderNewBal = riderWallet.balance.minus(fee);
+    await tx.wallet.update({ where: { id: riderWallet.id }, data: { balance: riderNewBal } });
+    await tx.walletTransaction.create({
+      data: {
+        walletId: riderWallet.id,
+        type: 'LATE_FEE',
+        amount: fee,
+        balanceAfter: riderNewBal,
+        description: 'غرامة تأخير الراكب',
+        status: 'COMPLETED',
+        rideId: ride.id,
+        metadata: { rideId: ride.id, reason: 'rider_late' },
+      },
+    });
+    riderDebited = true;
+  } else {
+    console.warn(`⚠️ غرامة تأخير الراكب ${ride.riderId} لم تُخصم من محفظته (لا محفظة/رصيد غير كافٍ) — سُجّلت مستحقة`);
+  }
+
+  await tx.rideRequest.update({
+    where: { id: ride.id },
+    data: { lateFeeApplied: true, lateFeeAppliedAt: new Date(), lateFeeAmount: fee },
+  });
+
+  console.log(`💰 LATE_FEE ${fee.toString()} ج.م أُضيفت للكابتن ${ride.driverId} (خصم من الراكب: ${riderDebited}) للرحلة ${ride.id}`);
+  return { fee, riderDebited };
+}
+
+/**
+ * إلغاء رحلة وفق سياسة 2026-08-05:
+ *  - قبل القبول (PENDING): إلغاء عادي بلا أي حركة محفظة.
+ *  - بعد القبول من الكابتن: إلغاء فقط — العمولة المخصومة لا تُسترد أبداً.
+ *  - بعد القبول من الراكب: إلغاء + جدولة استرداد مؤجل بعد 60 دقيقة
+ *    + غرامة تأخير إن كان الكابتن وصل وانتهى عداد الانتظار دون بدء الرحلة.
+ */
 async function cancelRide(userId, rideId) {
   const ride = await prisma.rideRequest.findUnique({ where: { id: rideId } });
   if (!ride) throw new Error('الرحلة غير موجودة');
   if (ride.riderId !== userId && ride.driverId !== userId) throw new Error('ليس لديك صلاحية لإلغاء هذه الرحلة');
   if (ride.status === 'COMPLETED') throw new Error('لا يمكن إلغاء رحلة منتهية');
+  if (ride.status === 'CANCELLED') throw new Error('الرحلة ملغاة بالفعل');
 
-  const updated = await prisma.rideRequest.update({ where: { id: rideId }, data: { status: 'CANCELLED' } });
+  const isRider = ride.riderId === userId;
+  const isCaptain = ride.driverId === userId;
+  const wasAccepted = ride.status !== 'PENDING' && ride.driverId != null;
+  const cancelledBy = isRider ? 'RIDER' : 'CAPTAIN';
+
+  const { COMMISSION_REFUND_DELAY_MINUTES } = await getRidePolicyConfig();
+  const now = new Date();
+
+  const updated = await prisma.$transaction(async (tx) => {
+    // إعادة قراءة الرحلة داخل المعاملة لضمان حالة محدّثة (منع المعالجة المزدوجة)
+    const fresh = await tx.rideRequest.findUnique({ where: { id: rideId } });
+    if (!fresh || fresh.status === 'CANCELLED') throw new Error('الرحلة ملغاة بالفعل');
+
+    // ── قبل القبول: إلغاء عادي فقط ──
+    if (!wasAccepted) {
+      return tx.rideRequest.update({
+        where: { id: rideId },
+        data: { status: 'CANCELLED', cancelledBy, cancelledAt: now },
+      });
+    }
+
+    // ── بعد القبول (العمولة اتخصمت عند القبول) ──
+    const data = { status: 'CANCELLED', cancelledBy, cancelledAt: now };
+
+    if (isRider) {
+      // إلغاء من الراكب: لا نسترد العمولة فوراً — نجدد استرداداً مؤجلاً بعد 60 دقيقة
+      if (!fresh.commissionRefundedAt && !fresh.pendingCommissionRefundAt) {
+        data.pendingCommissionRefundAt = new Date(now.getTime() + COMMISSION_REFUND_DELAY_MINUTES * 60 * 1000);
+      }
+
+      // غرامة التأخير: وصل الكابتن + انتهى العداد + لم تبدأ الرحلة + لم تُطبَّق من قبل
+      const { RIDER_WAIT_MINUTES } = await getRidePolicyConfig();
+      const arrivedAt = fresh.arrivedAt ? new Date(fresh.arrivedAt).getTime() : null;
+      const waitMs = RIDER_WAIT_MINUTES * 60 * 1000;
+      const timerExpired = arrivedAt != null && Date.now() >= arrivedAt + waitMs;
+      const rideStarted = fresh.status === 'STARTED';
+      if (timerExpired && !rideStarted && !fresh.lateFeeApplied) {
+        await _applyLateFee(tx, fresh);
+      }
+    }
+    // إلغاء من الكابتن: لا استرداد أبداً (لا COMMISSION_REFUND)
+
+    return tx.rideRequest.update({ where: { id: rideId }, data });
+  });
 
   // مزامنة الحالة مع Firestore mirror (غير حرجة)
   await syncRideStatusToFirestore(rideId, 'cancelled');
+
+  return updated;
+}
+
+/**
+ * تسجيل وصول الكابتن لنقطة الاستلام — يبدأ عداد انتظار الراكب.
+ * لا يغيّر الحالة من ACCEPTED (حتى يظل startRide يعمل كما هو).
+ */
+async function markRideArrived(userId, rideId) {
+  const ride = await prisma.rideRequest.findUnique({ where: { id: rideId } });
+  if (!ride) throw new Error('الرحلة غير موجودة');
+  if (ride.driverId !== userId) throw new Error('هذه الرحلة ليست مخصصة لك');
+  if (ride.status !== 'ACCEPTED') throw new Error('لا يمكن تسجيل الوصول إلا بعد قبول الرحلة');
+
+  const updated = await prisma.rideRequest.update({
+    where: { id: rideId },
+    data: { arrivedAt: ride.arrivedAt || new Date() },
+  });
+
+  // مزامنة الحالة مع Firestore mirror (غير حرجة)
+  await syncRideStatusToFirestore(rideId, 'arrived');
 
   return updated;
 }
@@ -403,22 +620,57 @@ async function rateRide(userId, { rideId, toUserId, rating, comment }) {
 // ── تسوية الرحلة الموحدة (نظام Double-Entry عبر المحفظة) ──
 // كل الحركات المالية تُسجَّل كمعاملات على محافظ العميل/الكابتن/المنصة،
 // ولا يتم المساس بـ DriverProfile.balance (مهمَل — المحفظة هي المصدر الوحيد للأرصدة).
+//
+// سياسة 2026-08-05: العمولة تُخصم فوراً عند القبول (phase: on_accept).
+// لذلك عند الإكمال لا تُخصم عمولة الشركة مرة ثانية:
+//   - wallet:  خصم price من الراكب، وإضافة price للكابتن
+//              (صافي الكابتن = price − العمولة المخصومة عند القبول = driverEarning)
+//   - cash:    لا خصم عمولة ثانٍ (اتخصمت عند القبول) — تحديث إحصائيات فقط
+//   - card:    إضافة price للكابتن (نفس منطق wallet)
+// الرحلات القديمة (قبل السياسة، commissionDeductedAtAccept=false) تحافظ
+// على السلوك السابق حتى لا تُكسَر الرحلات الجارية أثناء الترقية.
 async function _settleRideCore(tx, { rideId, driverId }) {
   // جلب الرحلة مع حقل isPaid للتحقق من عدم التكرار
   const ride = await tx.rideRequest.findUnique({
     where: { id: rideId },
-    select: { id: true, riderId: true, driverId: true, price: true, paymentMethod: true, status: true, isPaid: true },
+    select: {
+      id: true,
+      riderId: true,
+      driverId: true,
+      price: true,
+      paymentMethod: true,
+      status: true,
+      isPaid: true,
+      commission: true,
+      commissionRate: true,
+      driverEarning: true,
+      commissionDeductedAtAccept: true,
+    },
   });
   if (!ride) throw new Error('الرحلة غير موجودة');
   if (ride.driverId && ride.driverId !== driverId) throw new Error('هذه الرحلة ليست مخصصة لك');
   if (ride.status === 'COMPLETED' && ride.isPaid) throw new Error('تم تسوية هذه الرحلة مسبقاً');
   if (ride.status !== 'STARTED' && ride.status !== 'COMPLETED') throw new Error('لا يمكن تسوية رحلة في هذه الحالة');
 
-  // حساب العمولة وأرباح الكابتن
-  const rate = await getCommissionRate(driverId);
   const price = new Prisma.Decimal(ride.price);
-  const commission = price.mul(rate).toDecimalPlaces(2);
-  const driverEarning = price.minus(commission);
+
+  // ── هل خُصمت العمولة عند القبول؟ ──
+  const commissionDeducted = ride.commissionDeductedAtAccept;
+
+  let commission;
+  let driverEarning;
+  let rate;
+  if (commissionDeducted) {
+    // نستخدم القيم المخزنة عند القبول (لا نعيد الحساب حتى لا يتغير السعر/النسبة)
+    commission = new Prisma.Decimal(ride.commission || 0);
+    driverEarning = new Prisma.Decimal(ride.driverEarning || 0);
+    rate = ride.commissionRate || new Prisma.Decimal(0);
+  } else {
+    // رحلة قديمة (قبل السياسة): نحافظ على الحساب السابق
+    rate = await getCommissionRate(driverId);
+    commission = price.mul(rate).toDecimalPlaces(2);
+    driverEarning = price.minus(commission);
+  }
 
   const paymentMethod = ride.paymentMethod || 'wallet';
 
@@ -444,10 +696,12 @@ async function _settleRideCore(tx, { rideId, driverId }) {
       },
     });
 
-    // إضافة أرباح الكابتن (price - commission) إلى محفظته
+    // إضافة للكابتن: العمولة اتخصمت عند القبول → يُضاف له السعر الكامل
+    // (صافي الربح = السعر − العمولة المخصومة سابقاً = driverEarning)
     const capWallet = await tx.wallet.findUnique({ where: { userId: ride.driverId } });
     if (!capWallet) throw new Error('محفظة الكابتن غير موجودة');
-    const capNewBal = capWallet.balance.plus(driverEarning);
+    const capCredit = commissionDeducted ? price : driverEarning;
+    const capNewBal = capWallet.balance.plus(capCredit);
     await tx.wallet.update({
       where: { id: capWallet.id },
       data: { balance: capNewBal, totalEarned: { increment: driverEarning } },
@@ -456,52 +710,66 @@ async function _settleRideCore(tx, { rideId, driverId }) {
       data: {
         walletId: capWallet.id,
         type: 'DRIVER_EARNING',
-        amount: driverEarning,
+        amount: capCredit,
         balanceAfter: capNewBal,
-        description: `أرباح الرحلة ${ride.id}`,
+        description: commissionDeducted
+          ? `أرباح الرحلة ${ride.id} (العمولة خُصمت عند القبول)`
+          : `أرباح الرحلة ${ride.id}`,
         status: 'COMPLETED',
         rideId: ride.id,
+        metadata: { net: driverEarning.toString(), commissionDeductedAtAccept: commissionDeducted },
       },
     });
   } else if (paymentMethod === 'cash') {
     // ── الدفع نقداً ───────────────────────────────
-    // الكابتن قبض كامل القيمة من الراكب، يخصم منه العمولة فقط.
-    // يُسمح بخصم العمولة حتى لو أصبح الرصيد سالباً، بشرط ألا يتجاوز حد الدين.
+    // الكابتن قبض كامل القيمة من الراكب.
     const capWallet = await tx.wallet.findUnique({ where: { userId: ride.driverId } });
     if (!capWallet) throw new Error('محفظة الكابتن غير موجودة');
-    const capNewBal = capWallet.balance.minus(commission);
-    const minBalance = await getWalletLimit(
-      'CAPTAIN_MIN_BALANCE',
-      DEFAULT_LIMITS.CAPTAIN_MIN_BALANCE
-    );
-    // لو (الرصيد - العمولة) < حد الدين → ارفض التسوية حتى لا يزداد الدين
-    if (capNewBal.lt(minBalance)) {
-      throw new Error(
-        `رصيدك وصل لحد الدين (${Math.abs(minBalance)} ج). اشحن المحفظة لإكمال الرحلات`
+
+    if (commissionDeducted) {
+      // العمولة اتخصمت عند القبول → لا خصم ثانٍ، تحديث الإحصائيات فقط
+      await tx.wallet.update({
+        where: { id: capWallet.id },
+        data: { totalEarned: { increment: driverEarning } },
+      });
+      console.log(`✅ كاش ${ride.id}: العمولة خُصمت عند القبول — لا خصم ثانٍ من الكابتن`);
+    } else {
+      // رحلة قديمة: خصم العمولة الآن كما في السلوك السابق
+      const capNewBal = capWallet.balance.minus(commission);
+      const minBalance = await getWalletLimit(
+        'CAPTAIN_MIN_BALANCE',
+        DEFAULT_LIMITS.CAPTAIN_MIN_BALANCE
       );
+      // لو (الرصيد - العمولة) < حد الدين → ارفض التسوية حتى لا يزداد الدين
+      if (capNewBal.lt(minBalance)) {
+        throw new Error(
+          `رصيدك وصل لحد الدين (${Math.abs(minBalance)} ج). اشحن المحفظة لإكمال الرحلات`
+        );
+      }
+      await tx.wallet.update({
+        where: { id: capWallet.id },
+        data: { balance: capNewBal, totalEarned: { increment: driverEarning } },
+      });
+      await tx.walletTransaction.create({
+        data: {
+          walletId: capWallet.id,
+          type: 'COMMISSION',
+          amount: commission,
+          balanceAfter: capNewBal,
+          description: `عمولة التطبيق ${rate.toString()} - الرحلة ${ride.id} (كاش)`,
+          status: 'COMPLETED',
+          rideId: ride.id,
+          metadata: { rate: rate.toString(), net: driverEarning.toString(), phase: 'on_settle_legacy' },
+        },
+      });
     }
-    await tx.wallet.update({
-      where: { id: capWallet.id },
-      data: { balance: capNewBal, totalEarned: { increment: driverEarning } },
-    });
-    await tx.walletTransaction.create({
-      data: {
-        walletId: capWallet.id,
-        type: 'COMMISSION',
-        amount: commission,
-        balanceAfter: capNewBal,
-        description: `عمولة التطبيق ${(rate * 100).toString()}% - الرحلة ${ride.id} (كاش)`,
-        status: 'COMPLETED',
-        rideId: ride.id,
-        metadata: { rate: rate.toString(), net: driverEarning.toString() },
-      },
-    });
   } else {
     // ── الدفع أونلاين / بطاقة ─────────────────────
-    // المنصة تستلم قيمة الرحلة وتضيف أرباح الكابتن لمحفظته
+    // المنصة تستلم قيمة الرحلة وتضيف للكابتن (السعر الكامل لو العمولة اتخصمت)
     const capWallet = await tx.wallet.findUnique({ where: { userId: ride.driverId } });
     if (!capWallet) throw new Error('محفظة الكابتن غير موجودة');
-    const capNewBal = capWallet.balance.plus(driverEarning);
+    const capCredit = commissionDeducted ? price : driverEarning;
+    const capNewBal = capWallet.balance.plus(capCredit);
     await tx.wallet.update({
       where: { id: capWallet.id },
       data: { balance: capNewBal, totalEarned: { increment: driverEarning } },
@@ -510,11 +778,14 @@ async function _settleRideCore(tx, { rideId, driverId }) {
       data: {
         walletId: capWallet.id,
         type: 'DRIVER_EARNING',
-        amount: driverEarning,
+        amount: capCredit,
         balanceAfter: capNewBal,
-        description: `أرباح الرحلة ${ride.id} (${paymentMethod})`,
+        description: commissionDeducted
+          ? `أرباح الرحلة ${ride.id} (${paymentMethod}) — العمولة خُصمت عند القبول`
+          : `أرباح الرحلة ${ride.id} (${paymentMethod})`,
         status: 'COMPLETED',
         rideId: ride.id,
+        metadata: { net: driverEarning.toString(), commissionDeductedAtAccept: commissionDeducted },
       },
     });
   }
@@ -551,4 +822,177 @@ async function settleRide(tx, { rideId, driverId } = {}) {
   return prisma.$transaction(async (t) => _settleRideCore(t, { rideId, driverId }));
 }
 
-module.exports = { getRideOptions, calculateRideFare, requestRide, cancelRide, rateRide, getCommissionRate, settleRide, syncRideStatusToFirestore, createChatRoom, resetConfigCache };
+// ─────────────────────────────────────────────────────────────
+// عمال الخلفية لسياسة الرحلات (DB كمصدر حقيقة — لا setTimeout غير موثوق)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * العامل المسؤول عن الاسترداد المؤجل للعمولة (إلغاء الراكب بعد القبول).
+ * يفحص كل دقيقة الرحلات الملغاة من الراكب التي استحقّ استردادها
+ * (pendingCommissionRefundAt <= now) ويمنع الاسترداد المزدوج عبر
+ * تحديث ذري شرطي (commissionRefundedAt = null).
+ * @returns {Promise<number>} عدد الرحلات المعالجة
+ */
+async function processDueCommissionRefunds() {
+  const now = new Date();
+  let processed = 0;
+  try {
+    const dueRides = await prisma.rideRequest.findMany({
+      where: {
+        status: 'CANCELLED',
+        cancelledBy: 'RIDER',
+        pendingCommissionRefundAt: { lte: now },
+        commissionRefundedAt: null,
+      },
+      take: 100,
+    });
+
+    for (const ride of dueRides) {
+      try {
+        await prisma.$transaction(async (tx) => {
+          const fresh = await tx.rideRequest.findUnique({ where: { id: ride.id } });
+          if (!fresh || fresh.status !== 'CANCELLED' || fresh.commissionRefundedAt) return; // منع التكرار
+          if (!fresh.pendingCommissionRefundAt || new Date(fresh.pendingCommissionRefundAt) > new Date()) return;
+
+          // حجز ذري: يضمن أن رحلاً واحداً فقط يعالج الاسترداد
+          const claim = await tx.rideRequest.updateMany({
+            where: { id: fresh.id, status: 'CANCELLED', commissionRefundedAt: null },
+            data: { commissionRefundedAt: new Date() },
+          });
+          if (claim.count === 0) return;
+
+          if (fresh.commissionDeductedAtAccept) {
+            const commission = new Prisma.Decimal(fresh.commission || 0);
+            if (commission.gt(0)) {
+              const capWallet = await tx.wallet.findUnique({ where: { userId: fresh.driverId } });
+              if (capWallet) {
+                const capNewBal = capWallet.balance.plus(commission);
+                await tx.wallet.update({ where: { id: capWallet.id }, data: { balance: capNewBal } });
+                await tx.walletTransaction.create({
+                  data: {
+                    walletId: capWallet.id,
+                    type: 'COMMISSION_REFUND',
+                    amount: commission,
+                    balanceAfter: capNewBal,
+                    description: 'استرداد عمولة بعد إلغاء الراكب',
+                    status: 'COMPLETED',
+                    rideId: fresh.id,
+                    metadata: { phase: 'rider_cancel', rideId: fresh.id, reason: 'rider_cancel' },
+                  },
+                });
+                console.log(`💰 COMMISSION_REFUND ${commission.toString()} ج.م أُعيدت للكابتن ${fresh.driverId} للرحلة ${fresh.id}`);
+              }
+            }
+          } else {
+            console.log(`↩️ رحلة ${fresh.id}: لا عمولة مخصومة عند القبول (رحلة قديمة) — لا استرداد`);
+          }
+        });
+        processed += 1;
+      } catch (err) {
+        console.error(`⚠️ فشل استرداد عمولة الرحلة ${ride.id}:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.error('⚠️ processDueCommissionRefunds error:', err.message);
+  }
+  if (processed > 0) console.log(`🔄 اكتمل فحص الاسترداد المؤجل: تمت معالجة ${processed} رحلة`);
+  return processed;
+}
+
+/**
+ * العامل المسؤول عن غرامة تأخير الراكب (Waiting / No-show fee).
+ * يفحص كل دقيقة الرحلات التي وصل فيها الكابتن (arrivedAt) وانتهى عداد
+ * الانتظار (RIDER_WAIT_MINUTES) دون أن تبدأ الرحلة، فيطبّق الغرامة
+ * (خصم من الراكب + إضافة للكابتن) مرة واحدة فقط.
+ * @returns {Promise<number>} عدد الرحلات المعالجة
+ */
+async function processDueLateFees() {
+  const { RIDER_WAIT_MINUTES } = await getRidePolicyConfig();
+  const waitMs = RIDER_WAIT_MINUTES * 60 * 1000;
+  const cutoff = new Date(Date.now() - waitMs);
+  let processed = 0;
+  try {
+    const dueRides = await prisma.rideRequest.findMany({
+      where: {
+        status: { in: ['ACCEPTED', 'ARRIVED'] },
+        arrivedAt: { not: null, lte: cutoff },
+        lateFeeApplied: false,
+      },
+      take: 100,
+    });
+
+    for (const ride of dueRides) {
+      try {
+        await prisma.$transaction(async (tx) => {
+          const fresh = await tx.rideRequest.findUnique({ where: { id: ride.id } });
+          if (!fresh || fresh.lateFeeApplied) return; // منع التكرار
+          // لو بدأت الرحلة قبل انتهاء العداد → لا غرامة (مُعالجة في الشرط أدناه)
+          if (fresh.status === 'STARTED' || fresh.status === 'COMPLETED') return;
+          if (!fresh.arrivedAt) return;
+          if (new Date(fresh.arrivedAt).getTime() + waitMs > Date.now()) return;
+
+          // حجز ذري: يضمن تطبيق الغرامة مرة واحدة فقط
+          const claim = await tx.rideRequest.updateMany({
+            where: { id: fresh.id, lateFeeApplied: false },
+            data: { lateFeeApplied: true, lateFeeAppliedAt: new Date() },
+          });
+          if (claim.count === 0) return;
+
+          await _applyLateFee(tx, fresh);
+        });
+        processed += 1;
+      } catch (err) {
+        console.error(`⚠️ فشل تطبيق غرامة تأخير الرحلة ${ride.id}:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.error('⚠️ processDueLateFees error:', err.message);
+  }
+  if (processed > 0) console.log(`🔄 اكتمل فحص غرامة التأخير: تمت معالجة ${processed} رحلة`);
+  return processed;
+}
+
+let _workersStarted = false;
+const WORKER_INTERVAL_MS = 60 * 1000; // كل دقيقة
+
+/**
+ * يبدأ عمال الخلفية لسياسة الرحلات (استرداد مؤجل + غرامة تأخير).
+ * يُستدعى مرة واحدة عند تشغيل السيرفر. كل عامل يعمل بشكل مستقل
+ * مع try/catch داخلي — فشل أحدهما لا يوقف الآخر.
+ */
+function startRidePolicyWorkers() {
+  if (_workersStarted) return;
+  _workersStarted = true;
+
+  // فحص أولي عند الإقلاع (يلتقط أي رحلات استحقت أثناء توقف السيرفر)
+  processDueCommissionRefunds().catch((e) => console.error('⚠️ initial refund pass:', e?.message));
+  processDueLateFees().catch((e) => console.error('⚠️ initial late-fee pass:', e?.message));
+
+  setInterval(() => {
+    processDueCommissionRefunds().catch((e) => console.error('⚠️ refund worker:', e?.message));
+  }, WORKER_INTERVAL_MS);
+
+  setInterval(() => {
+    processDueLateFees().catch((e) => console.error('⚠️ late-fee worker:', e?.message));
+  }, WORKER_INTERVAL_MS);
+
+  console.log('🛠️  تم تشغيل عمال سياسة الرحلات (استرداد مؤجل كل دقيقة + غرامة تأخير كل دقيقة)');
+}
+
+module.exports = {
+  getRideOptions,
+  calculateRideFare,
+  requestRide,
+  cancelRide,
+  rateRide,
+  getCommissionRate,
+  settleRide,
+  acceptRide,
+  markRideArrived,
+  processDueCommissionRefunds,
+  processDueLateFees,
+  startRidePolicyWorkers,
+  syncRideStatusToFirestore,
+  createChatRoom,
+  resetConfigCache,
+};

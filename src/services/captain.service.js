@@ -1,8 +1,7 @@
 const prisma = require('../config/prisma');
 const { Prisma } = require('@prisma/client');
 const { haversineDistance, getGovernorateFromCoords } = require('../services/geo');
-const { getCommissionRate, settleRide, syncRideStatusToFirestore, createChatRoom } = require('./ride.service');
-const { assertCanAcceptRides } = require('../config/wallet.constants');
+const { settleRide, syncRideStatusToFirestore, createChatRoom, acceptRide: acceptRideCore, markRideArrived } = require('./ride.service');
 const { createCaptainPendingNotification } = require('./notification.service');
 
 async function updateLocation(userId, lat, lng, residenceGovernorate) {
@@ -100,34 +99,30 @@ async function getAvailableRides(userId, searchRadiusKm = 5) {
 }
 
 async function acceptRide(userId, rideId) {
-  // حارس حد الدين: لا يمكن قبول رحلات إذا كان الرصيد عند حد الدين أو أقل
-  await assertCanAcceptRides(userId);
-
   // ── حارس التوثيق: لا يمكن لكابتن غير معتمد قبول الرحلات ──
   const captainProfile = await prisma.driverProfile.findUnique({ where: { userId } });
   if (!captainProfile || captainProfile.verificationStatus !== 'APPROVED') {
     throw new Error('لم يتم اعتماد حسابك بعد، لا يمكنك قبول الرحلات.');
   }
 
-  const ride = await prisma.rideRequest.findUnique({ where: { id: rideId } });
-  if (!ride) throw new Error('الرحلة غير موجودة');
-  if (ride.status !== 'PENDING') throw new Error('الرحلة لم تعد متاحة');
-
-  const updated = await prisma.rideRequest.update({
-    where: { id: rideId },
-    data: { driverId: userId, status: 'ACCEPTED' },
-    include: {
-      driver: { select: { id: true, firstName: true, lastName: true, phoneNumber: true, driverProfile: true } },
-    },
-  });
+  // القبول الموحد (في ride.service): حارس حد الدين + خصم العمولة فوراً
+  // من محفظة الكابتن + تحديث الرحلة (status=ACCEPTED, acceptedAt, commission...)
+  const updated = await acceptRideCore(userId, rideId);
 
   // مزامنة الحالة مع Firestore mirror (غير حرجة)
   await syncRideStatusToFirestore(rideId, 'accepted');
 
   // إنشاء غرفة محادثة ريل تايم في Firestore (غير حرجة)
-  await createChatRoom(rideId, ride.riderId, userId);
+  await createChatRoom(rideId, updated.riderId, userId);
 
   return updated;
+}
+
+/**
+ * تسجيل وصول الكابتن لنقطة الاستلام (يبدأ عداد انتظار الراكب).
+ */
+async function markRideArrivedForCaptain(userId, rideId) {
+  return markRideArrived(userId, rideId);
 }
 
 async function startRide(userId, rideId) {
@@ -156,4 +151,4 @@ async function completeRide(userId, rideId) {
   return result;
 }
 
-module.exports = { updateLocation, getAvailableRides, acceptRide, startRide, completeRide };
+module.exports = { updateLocation, getAvailableRides, acceptRide, startRide, completeRide, markRideArrivedForCaptain };

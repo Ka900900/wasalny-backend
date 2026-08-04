@@ -32,6 +32,9 @@ enum WalletTransactionType {
   RIDE_REFUND
   DRIVER_EARNING
   COMMISSION
+  COMMISSION_REFUND
+  LATE_FEE
+  LATE_FEE_CREDIT
   TOPUP
   WITHDRAWAL
 }
@@ -259,6 +262,18 @@ model RideRequest {
   isPaid       Boolean @default(false)
   paidAt       DateTime?
   paymentMethod String?
+
+  // ── سياسة العمولة / الإلغاء / غرامة التأخير (2026-08-05) ──
+  acceptedAt                 DateTime?  // وقت قبول الكابتن للرحلة (يُخصم عندها العمولة)
+  arrivedAt                  DateTime?  // وقت وصول الكابتن لنقطة الاستلام (يبدأ عداد الانتظار)
+  commissionDeductedAtAccept Boolean   @default(false) // هل خُصمت العمولة فوراً عند القبول؟
+  pendingCommissionRefundAt  DateTime?  // موعد استحقاق الاسترداد المؤجل (إلغاء الراكب + 60 دقيقة)
+  commissionRefundedAt       DateTime?  // وقت تنفيذ الاسترداد المؤجل (يمنع الاسترداد المزدوج)
+  lateFeeApplied             Boolean   @default(false) // هل طُبقت غرامة تأخير الراكب؟
+  lateFeeAppliedAt           DateTime?  // وقت تطبيق الغرامة
+  lateFeeAmount              Decimal?  @db.Decimal(10, 2) // مبلغ الغرامة المطبقة
+  cancelledBy                String?   // من ألغى الرحلة: 'RIDER' أو 'CAPTAIN'
+  cancelledAt                DateTime?  // وقت الإلغاء
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
