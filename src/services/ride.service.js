@@ -220,6 +220,9 @@ async function requestRide(userId, data, io) {
     await db.collection('rides').doc(newRide.id).set({
       riderId: userId,
       riderName,
+      // رقم هاتف الراكب يُنسخ في الـ Mirror حتى يتوفّر لكارت الرحلة النشطة
+      // (RideModel.fromSnapshot) ويُستخدم لاحقاً في زر الاتصال المحلي tel:.
+      riderPhone,
       pickupAddress: newRide.pickupAddress || newRide.pickupPoint,
       destinationAddress: newRide.destinationAddress || newRide.dropoffPoint,
       pickupLat: newRide.originLat,

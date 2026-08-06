@@ -30,7 +30,7 @@ const { getRideHistoryHandler } = require('../controllers/ride.controller');
 router.post(
   '/documents',
   authenticateToken,
-  requireRole('CAPTAIN'), // 👈 تعديل الـ Role إلى CAPTAIN
+  requireRole('CAPTAIN', 'DRIVER'), // 👈 الكابتن مسجّل بدور DRIVER — نسمح بالدورين
   upload.fields([
     { name: 'nationalIdFront', maxCount: 1 },
     { name: 'nationalIdBack', maxCount: 1 },
@@ -45,7 +45,7 @@ router.post(
 router.post(
   '/vehicle',
   authenticateToken,
-  requireRole('CAPTAIN'),
+  requireRole('CAPTAIN', 'DRIVER'),
   upload.fields([
     { name: 'licenseFront', maxCount: 1 },
     { name: 'licenseBack', maxCount: 1 },
@@ -53,13 +53,13 @@ router.post(
   addVehicleHandler
 );
 
-router.get('/verification-status', authenticateToken, requireRole('CAPTAIN'), getVerificationStatusHandler);
-router.put('/location', authenticateToken, requireRole('CAPTAIN'), validate(updateLocationSchema), (req, res) => updateLocationHandler(req, res, req.app.locals.io));
-router.post('/toggle-availability', authenticateToken, requireRole('CAPTAIN'), validate(toggleAvailabilitySchema), (req, res) => toggleAvailabilityHandler(req, res, req.app.locals.io));
-router.get('/available-rides', authenticateToken, requireRole('CAPTAIN'), getAvailableRidesHandler);
-router.post('/accept-ride/:rideId', authenticateToken, requireRole('CAPTAIN'), (req, res) => acceptRideHandler(req, res, req.app.locals.io));
-router.put('/ride/start/:rideId', authenticateToken, requireRole('CAPTAIN'), (req, res) => startRideHandler(req, res, req.app.locals.io));
-router.put('/ride/complete/:rideId', authenticateToken, requireRole('CAPTAIN'), (req, res) => completeRideHandler(req, res, req.app.locals.io));
+router.get('/verification-status', authenticateToken, requireRole('CAPTAIN', 'DRIVER'), getVerificationStatusHandler);
+router.put('/location', authenticateToken, requireRole('CAPTAIN', 'DRIVER'), validate(updateLocationSchema), (req, res) => updateLocationHandler(req, res, req.app.locals.io));
+router.post('/toggle-availability', authenticateToken, requireRole('CAPTAIN', 'DRIVER'), validate(toggleAvailabilitySchema), (req, res) => toggleAvailabilityHandler(req, res, req.app.locals.io));
+router.get('/available-rides', authenticateToken, requireRole('CAPTAIN', 'DRIVER'), getAvailableRidesHandler);
+router.post('/accept-ride/:rideId', authenticateToken, requireRole('CAPTAIN', 'DRIVER'), (req, res) => acceptRideHandler(req, res, req.app.locals.io));
+router.put('/ride/start/:rideId', authenticateToken, requireRole('CAPTAIN', 'DRIVER'), (req, res) => startRideHandler(req, res, req.app.locals.io));
+router.put('/ride/complete/:rideId', authenticateToken, requireRole('CAPTAIN', 'DRIVER'), (req, res) => completeRideHandler(req, res, req.app.locals.io));
 
 /**
  * @swagger
@@ -80,9 +80,10 @@ router.put('/ride/complete/:rideId', authenticateToken, requireRole('CAPTAIN'), 
  *       200:
  *         description: Earnings data
  */
-// نسمح بالدورين CAPTAIN و DRIVER لأن بعض المستخدمين role=DRIVER في الـ schema
+// نسمح بالدورين CAPTAIN و DRIVER لأن الكابتن مسجّل بدور DRIVER في الـ schema
+// (جميع مسارات الكابتن المشتركة تسمح بالدورين لتجنّب 403 "مخصص لـ CAPTAIN فقط")
 router.get('/earnings', authenticateToken, requireRole('CAPTAIN', 'DRIVER'), getEarningsHandler);
-router.get('/ratings', authenticateToken, requireRole('CAPTAIN'), getDriverRatingsHandler);
+router.get('/ratings', authenticateToken, requireRole('CAPTAIN', 'DRIVER'), getDriverRatingsHandler);
 
 /**
  * @swagger
@@ -95,6 +96,6 @@ router.get('/ratings', authenticateToken, requireRole('CAPTAIN'), getDriverRatin
  *       200:
  *         description: List of past rides for the driver
  */
-router.get('/rides/history', authenticateToken, requireRole('CAPTAIN'), getRideHistoryHandler);
+router.get('/rides/history', authenticateToken, requireRole('CAPTAIN', 'DRIVER'), getRideHistoryHandler);
 
 module.exports = router;
