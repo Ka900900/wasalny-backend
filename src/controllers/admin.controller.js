@@ -711,6 +711,7 @@ module.exports = {
   getUnreadNotificationsCountHandler,
   markNotificationReadHandler,
   markAllNotificationsReadHandler,
+  broadcastNotificationHandler,
   getSettingsHandler,
   updateSettingsHandler,
 };
@@ -810,6 +811,53 @@ async function markAllNotificationsReadHandler(req, res) {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'خطأ في تحديث الإشعارات' });
+  }
+}
+
+// ── POST /api/v1/admin/notifications/broadcast ──
+// بث إعلان من الأدمن إلى الكباتن (كل الكباتن أو كابتن محدد).
+// يحفظ الإشعار في DB (سجل للأدمن + لكل كابتن مستهدف) ويرسل FCM.
+// أي فشل جزئي في FCM لا يُفشل العملية — نُسجّل ونُكمل.
+async function broadcastNotificationHandler(req, res) {
+  const { broadcastToCaptains } = require('../services/notification.service');
+  try {
+    const { title, body, type = 'ADMIN_ANNOUNCEMENT', audience = 'ALL_CAPTAINS', targetUserId, data } = req.body;
+
+    if (!title || typeof title !== 'string' || title.trim() === '') {
+      return res.status(400).json({ error: 'title مطلوب' });
+    }
+    if (!body || typeof body !== 'string' || body.trim() === '') {
+      return res.status(400).json({ error: 'body مطلوب' });
+    }
+
+    const validAudiences = ['ALL_CAPTAINS', 'CAPTAIN'];
+    if (!validAudiences.includes(audience)) {
+      return res.status(400).json({ error: `audience غير صالح، القيم المقبولة: ${validAudiences.join(', ')}` });
+    }
+    if (audience === 'CAPTAIN' && !targetUserId) {
+      return res.status(400).json({ error: 'targetUserId مطلوب عند audience = CAPTAIN' });
+    }
+
+    const createdBy = req.user?.userId || req.user?.id || null;
+
+    const result = await broadcastToCaptains({
+      title: title.trim(),
+      body: body.trim(),
+      type,
+      audience,
+      targetUserId,
+      data: data && typeof data === 'object' ? data : {},
+      createdBy,
+    });
+
+    return res.json({
+      success: true,
+      message: `تم إرسال الإشعار إلى ${result.total} كابتن`,
+      ...result,
+    });
+  } catch (error) {
+    console.error('❌ broadcastNotificationHandler error:', error);
+    return res.status(500).json({ error: 'حدث خطأ أثناء إرسال الإشعار' });
   }
 }
 

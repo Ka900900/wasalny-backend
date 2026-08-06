@@ -73,6 +73,8 @@ const registerDriverSchema = {
     vehicleLicenseFrontUrl: Joi.string().uri().optional(),
     vehicleLicenseBackUrl:  Joi.string().uri().optional(),
     serviceTier:            Joi.string().valid('ECO', 'COMFORT', 'PREMIUM').optional(),
+    // توكن FCM ليُحفظ مباشرة مع تسجيل الكابتن (يُرسل بعد الحصول عليه)
+    fcmToken:               Joi.string().min(10).max(512).optional().allow(''),
   }),
 };
 

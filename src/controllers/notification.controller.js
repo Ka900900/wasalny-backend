@@ -1,5 +1,99 @@
 const prisma = require('../config/prisma');
 const { sendSingleNotification, sendBulkNotification, sendCampaignNotification } = require('../services/fcm.service');
+const {
+  getCaptainNotifications,
+  markCaptainNotificationRead,
+  markAllCaptainNotificationsRead,
+} = require('../services/notification.service');
+
+/**
+ * POST /api/v1/captain/fcm-token
+ * حفظ أو تحديث توكن FCM للكابتن الحالي.
+ * يقبل الحقل إما `token` أو `fcmToken` (توافق مع تطبيق الكابتن).
+ */
+async function registerCaptainTokenHandler(req, res) {
+  try {
+    const { token, fcmToken } = req.body;
+    const userId = req.user?.userId || req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'المستخدم غير مصرح' });
+    }
+
+    const raw = token || fcmToken;
+    if (typeof raw !== 'string' || raw.trim() === '') {
+      return res.status(400).json({ error: 'token مطلوب' });
+    }
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { fcmToken: raw.trim() },
+    });
+
+    return res.json({ success: true, message: 'تم حفظ توكن الإشعارات بنجاح' });
+  } catch (error) {
+    console.error('❌ registerCaptainTokenHandler error:', error);
+    return res.status(500).json({ error: 'حدث خطأ أثناء حفظ التوكن' });
+  }
+}
+
+/**
+ * GET /api/v1/captain/notifications
+ * جلب صندوق وارد إشعارات الكابتن.
+ */
+async function getCaptainNotificationsHandler(req, res) {
+  try {
+    const userId = req.user?.userId || req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'المستخدم غير مصرح' });
+    }
+    const result = await getCaptainNotifications(userId, req.query);
+    return res.json(result);
+  } catch (error) {
+    console.error('❌ getCaptainNotificationsHandler error:', error);
+    return res.status(500).json({ error: 'حدث خطأ أثناء جلب الإشعارات' });
+  }
+}
+
+/**
+ * PATCH /api/v1/captain/notifications/:id/read
+ * تعليم إشعار واحد كمقروء.
+ */
+async function markCaptainNotificationReadHandler(req, res) {
+  try {
+    const userId = req.user?.userId || req.user?.id;
+    const { id } = req.params;
+    if (!userId) {
+      return res.status(401).json({ error: 'المستخدم غير مصرح' });
+    }
+    const ok = await markCaptainNotificationRead(userId, id);
+    if (!ok) {
+      return res.status(404).json({ error: 'الإشعار غير موجود' });
+    }
+    return res.json({ message: 'تم تعليم الإشعار كمقروء' });
+  } catch (error) {
+    console.error('❌ markCaptainNotificationReadHandler error:', error);
+    return res.status(500).json({ error: 'حدث خطأ أثناء تحديث الإشعار' });
+  }
+}
+
+/**
+ * POST /api/v1/captain/notifications/read-all
+ * تعليم جميع إشعارات الكابتن كمقروءة.
+ */
+async function markAllCaptainNotificationsReadHandler(req, res) {
+  try {
+    const userId = req.user?.userId || req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'المستخدم غير مصرح' });
+    }
+    const count = await markAllCaptainNotificationsRead(userId);
+    return res.json({ message: 'تم تعليم جميع الإشعارات كمقروءة', updated: count });
+  } catch (error) {
+    console.error('❌ markAllCaptainNotificationsReadHandler error:', error);
+    return res.status(500).json({ error: 'حدث خطأ أثناء تحديث الإشعارات' });
+  }
+}
 
 /**
  * POST /api/v1/notifications/token
@@ -201,4 +295,8 @@ module.exports = {
   sendSingleHandler,
   sendCampaignHandler,
   getTargetCountHandler,
+  registerCaptainTokenHandler,
+  getCaptainNotificationsHandler,
+  markCaptainNotificationReadHandler,
+  markAllCaptainNotificationsReadHandler,
 };

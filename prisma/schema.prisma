@@ -400,11 +400,13 @@ model Config {
 model Notification {
   id        String   @id @default(cuid())
   userId    String? // null = إشعار عام للأدمن (لوحة التحكم)
-  type      String // SUPPORT_TICKET | SUPPORT_MESSAGE | WITHDRAWAL | LOW_RATING | CAPTAIN_PENDING
+  type      String // SUPPORT_TICKET | SUPPORT_MESSAGE | WITHDRAWAL | LOW_RATING | CAPTAIN_PENDING | ADMIN_ANNOUNCEMENT | NEW_RIDE | RIDE_STATUS | WITHDRAWAL_STATUS | SUPPORT_MESSAGE
   title     String
   body      String
   data      Json?
   link      String? // رابط التنقّل في لوحة التحكم (مثل /support)
+  audience  String?  @default("USER") // ALL_CAPTAINS | CAPTAIN | USER — الجمهور المستهدف
+  createdBy String?  // معرف الأدمن الذي أرسل الإشعار (للإشعارات المرسلة من اللوحة)
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
 
@@ -413,6 +415,7 @@ model Notification {
   @@index([userId])
   @@index([isRead])
   @@index([createdAt])
+  @@index([audience])
 }
 
 model Vehicle {

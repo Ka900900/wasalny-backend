@@ -23,6 +23,7 @@ const {
   getUnreadNotificationsCountHandler,
   markNotificationReadHandler,
   markAllNotificationsReadHandler,
+  broadcastNotificationHandler,
   getSettingsHandler,
   updateSettingsHandler,
 } = require('../controllers/admin.controller');
@@ -79,6 +80,7 @@ router.get('/notifications', authenticateToken, requireRole('ADMIN'), listNotifi
 router.get('/notifications/unread-count', authenticateToken, requireRole('ADMIN'), getUnreadNotificationsCountHandler);
 router.patch('/notifications/:id/read', authenticateToken, requireRole('ADMIN'), markNotificationReadHandler);
 router.post('/notifications/read-all', authenticateToken, requireRole('ADMIN'), markAllNotificationsReadHandler);
+router.post('/notifications/broadcast', authenticateToken, requireRole('ADMIN'), broadcastNotificationHandler);
 
 // ═══════════════════════════════════════════════════════
 //  مسارات الإعدادات (لوحة تحكم الأدمن)

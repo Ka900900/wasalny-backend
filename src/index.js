@@ -155,6 +155,9 @@ const authController = require('./controllers/auth.controller');
 app.post('/api/v1/auth/register-fcm-token', authenticateToken, authController.registerFcmToken);
 app.use('/api/v1/user', usersRoutes);
 app.use('/api/v1/captain', captainsRoutes);
+// إشعارات الكابتن: /api/v1/captain/fcm-token + /api/v1/captain/notifications ...
+// (captainsRoutes لا يملك هذه المسارات، فيمرّ الطلب إلى notificationsRoutes)
+app.use('/api/v1/captain', notificationsRoutes);
 // Aliases للتطبيق: أي مسار ممكن يستدعيه تطبيق الكابتن يشتغل (fix 404 الأرباح)
 // /api/v1/captain/earnings و /api/v1/driver/earnings و /api/v1/captains/earnings
 app.use('/api/v1/driver', captainsRoutes);
@@ -337,6 +340,7 @@ app.post('/api/v1/auth/register-driver', authenticateToken, validate(registerDri
     idCardUrl, licenseUrl,
     licenseNumber, criminalRecordUrl, drugTestUrl,
     serviceTier,
+    fcmToken,
   } = req.body;
   try {
     // نتأكد إن الرقم مش متسجل لحساب تاني
@@ -395,7 +399,12 @@ app.post('/api/v1/auth/register-driver', authenticateToken, validate(registerDri
     });
     await prisma.user.update({
       where: { id: req.user.userId },
-      data: { phoneNumber, role: 'DRIVER' },
+      data: {
+        phoneNumber,
+        role: 'DRIVER',
+        // حفظ توكن FCM مع تسجيل الكابتن مباشرة إن كان موجوداً
+        ...(fcmToken && typeof fcmToken === 'string' && fcmToken.trim() !== '' ? { fcmToken: fcmToken.trim() } : {}),
+      },
     });
     // Ensure wallet exists
     await ensureWallet(req.user.userId);
