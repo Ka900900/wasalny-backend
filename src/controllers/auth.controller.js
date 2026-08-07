@@ -4,6 +4,7 @@ const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const { sendMail, isConfigured } = require("../config/mailer");
 
 // ── تسجيل مستخدم جديد (email + password) ─────────────────
 async function register(req, res, next) {
@@ -317,11 +318,44 @@ function generateResetCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-// توصيل الرمز للمستخدم (بريد/رسالة) — حالياً يُطبع في سجل السيرفر فقط لعدم
-// وجود مزوّد بريد في المشروع. اربط هنا nodemailer / SendGrid عند التفعيل.
-function _deliverResetCode(user, code) {
-  // TODO: أرسل الرمز عبر البريد الإلكتروني (nodemailer / SendGrid) أو SMS
-  console.log(`🔑 Password reset code for ${user.email}: ${code}`);
+// توصيل الرمز للمستخدم عبر البريد الإلكتروني (SMTP عبر nodemailer).
+// عند عدم تكوين SMTP نطبع الرمز في سجل السيرفر فقط (بيئة تطوير) مع تسجيل
+// تحذير واضح — لا فشل صامت أبداً.
+async function _deliverResetCode(user, code) {
+  if (!isConfigured()) {
+    console.log(`🔑 [DEV] Password reset code for ${user.email}: ${code}`);
+    console.warn(
+      `⚠️ SMTP غير مكوّن — لن يُرسل بريد فعلي لـ ${user.email}. اضبط SMTP_* على Railway لتفعيل الإرسال.`,
+    );
+    return;
+  }
+
+  const subject = "وصلني — رمز إعادة تعيين كلمة المرور";
+  const text =
+    `مرحباً،\n\n` +
+    `تلقّينا طلباً لإعادة تعيين كلمة مرور حسابك في وصلني.\n` +
+    `رمز التحقق الخاص بك هو:\n\n` +
+    `   ${code}\n\n` +
+    `الرمز صالح لمدة 15 دقيقة.\n` +
+    `إن لم تكن أنت من طلب ذلك، يمكنك تجاهل هذه الرسالة.\n\n` +
+    `— فريق وصلني`;
+
+  try {
+    const result = await sendMail({ to: user.email, subject, text });
+    if (result.sent) {
+      console.log(`📧 Password reset email sent to ${user.email}`);
+    } else {
+      // نطبع الرمز في السجل كاحتياطي أثناء التطوير مع توثيق سبب الفشل،
+      // دون كشف أي أسرار (reason فقط).
+      console.log(`🔑 [DEV] Password reset code for ${user.email}: ${code}`);
+      console.warn(
+        `⚠️ فشل إرسال بريد إعادة التعيين إلى ${user.email} (${result.reason || "unknown"})`,
+      );
+    }
+  } catch (error) {
+    console.log(`🔑 [DEV] Password reset code for ${user.email}: ${code}`);
+    console.error("❌ _deliverResetCode error:", error.message);
+  }
 }
 
 // ── طلب رمز إعادة تعيين كلمة المرور ──
@@ -352,7 +386,7 @@ async function forgotPassword(req, res, next) {
       },
     });
 
-    _deliverResetCode(user, code);
+    await _deliverResetCode(user, code);
 
     const isProduction = process.env.NODE_ENV === "production";
     return res.json({
