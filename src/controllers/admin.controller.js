@@ -427,6 +427,21 @@ async function listRecentRidesHandler(req, res) {
       to: r.destinationAddress || r.dropoffPoint,
       status: r.status,
       fare: Number(r.price) || 0,
+      // ── بيانات مالية/سياسات (للعرض في تفاصيل الرحلة بلوحة التحكم) ──
+      commission: Number(r.commission) || 0,
+      commissionRate: r.commissionRate != null ? Number(r.commissionRate) : null,
+      driverEarning: Number(r.driverEarning) || 0,
+      isPaid: r.isPaid,
+      paidAt: r.paidAt,
+      paymentMethod: r.paymentMethod,
+      acceptedAt: r.acceptedAt,
+      arrivedAt: r.arrivedAt,
+      lateFeeApplied: r.lateFeeApplied,
+      lateFeeAppliedAt: r.lateFeeAppliedAt,
+      lateFeeAmount: r.lateFeeAmount != null ? Number(r.lateFeeAmount) : null,
+      commissionRefundedAt: r.commissionRefundedAt,
+      cancelledBy: r.cancelledBy,
+      cancelledAt: r.cancelledAt,
       createdAt: r.createdAt,
     }));
 
