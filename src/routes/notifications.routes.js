@@ -34,4 +34,13 @@ router.get('/notifications', authenticateToken, requireRole('CAPTAIN', 'DRIVER')
 router.patch('/notifications/:id/read', authenticateToken, requireRole('CAPTAIN', 'DRIVER'), markCaptainNotificationReadHandler);
 router.post('/notifications/read-all', authenticateToken, requireRole('CAPTAIN', 'DRIVER'), markAllCaptainNotificationsReadHandler);
 
+// ── إشعارات الراكب (تُعرَّض تحت /api/v1/notifications/rider) ──
+// GET   /api/v1/notifications/rider          — صندوق وارد الراكب
+// PATCH /api/v1/notifications/rider/:id/read — تعليم إشعار كمقروء
+// POST  /api/v1/notifications/rider/read-all — تعليم الكل كمقروء
+// نفس handlers لأنها عامة (تعتمد على req.user.userId فقط).
+router.get('/rider', authenticateToken, requireRole('RIDER'), getCaptainNotificationsHandler);
+router.patch('/rider/:id/read', authenticateToken, requireRole('RIDER'), markCaptainNotificationReadHandler);
+router.post('/rider/read-all', authenticateToken, requireRole('RIDER'), markAllCaptainNotificationsReadHandler);
+
 module.exports = router;

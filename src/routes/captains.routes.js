@@ -11,6 +11,7 @@ const {
   acceptRideHandler, 
   startRideHandler, 
   completeRideHandler, 
+  markRideArrivedHandler,
   getEarningsHandler, 
   getDriverRatingsHandler,
   uploadDocuments, // 👈 2. استيراد دالة رفع المستندات
@@ -60,6 +61,7 @@ router.get('/available-rides', authenticateToken, requireRole('CAPTAIN', 'DRIVER
 router.post('/accept-ride/:rideId', authenticateToken, requireRole('CAPTAIN', 'DRIVER'), (req, res) => acceptRideHandler(req, res, req.app.locals.io));
 router.put('/ride/start/:rideId', authenticateToken, requireRole('CAPTAIN', 'DRIVER'), (req, res) => startRideHandler(req, res, req.app.locals.io));
 router.put('/ride/complete/:rideId', authenticateToken, requireRole('CAPTAIN', 'DRIVER'), (req, res) => completeRideHandler(req, res, req.app.locals.io));
+router.post('/ride/arrived/:rideId', authenticateToken, requireRole('CAPTAIN', 'DRIVER'), (req, res) => markRideArrivedHandler(req, res, req.app.locals.io));
 
 /**
  * @swagger

@@ -17,7 +17,7 @@ const { initSupportSocket } = require('./sockets/support.socket');
 const { createKashierSession, verifyWebhookSignature, queryKashierTransaction, extractTopupUserId } = require('./services/kashier');
 const { initFirebase, verifyFirebaseToken } = require('./config/firebase');
 const { calculateDistance, calculateFare, estimateDuration, getPricePerKm, haversineDistance, isPeakHourNow } = require('./services/geo');
-const { settleRide } = require('./services/ride.service');
+const { settleRide, acceptRide, cancelRide, markRideArrived, startRidePolicyWorkers } = require('./services/ride.service');
 const prisma = require('./config/prisma');
 const authRoutes = require('./routes/auth.routes');
 const usersRoutes = require('./routes/users.routes');
@@ -970,23 +970,14 @@ app.get('/api/v1/rides/history', authenticateToken, async (req, res) => {
 app.put('/api/v1/rides/cancel/:rideId', authenticateToken, async (req, res) => {
   const { rideId } = req.params;
   try {
-    const ride = await prisma.rideRequest.findUnique({ where: { id: rideId } });
-    if (!ride) return res.status(404).json({ error: 'الرحلة غير موجودة' });
-    if (ride.riderId !== req.user.userId && ride.driverId !== req.user.userId) {
-      return res.status(403).json({ error: 'ليس لديك صلاحية لإلغاء هذه الرحلة' });
-    }
-    if (ride.status === 'COMPLETED') return res.status(400).json({ error: 'لا يمكن إلغاء رحلة منتهية' });
-
-    const updated = await prisma.rideRequest.update({
-      where: { id: rideId },
-      data: { status: 'CANCELLED' },
-    });
-
+    // cancelRide المحدث يطبّق سياسة الإلغاء: استرداد مؤجل عند إلغاء الراكب،
+    // لا استرداد عند إلغاء الكابتن، وغرامة تأخير إن وُجدت.
+    const updated = await cancelRide(req.user.userId, rideId);
     emitRideStatus(io, rideId, 'CANCELLED', { cancelledBy: req.user.userId });
     res.json({ message: 'تم إلغاء الرحلة', ride: updated });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'خطأ في إلغاء الرحلة' });
+    res.status(400).json({ error: error.message || 'خطأ في إلغاء الرحلة' });
   }
 });
 
@@ -1222,17 +1213,8 @@ app.get('/api/v1/driver/available-rides', authenticateToken, requireRole('DRIVER
 app.post('/api/v1/driver/accept-ride/:rideId', authenticateToken, requireRole('DRIVER'), async (req, res) => {
   const { rideId } = req.params;
   try {
-    const ride = await prisma.rideRequest.findUnique({ where: { id: rideId } });
-    if (!ride) return res.status(404).json({ error: 'الرحلة غير موجودة' });
-    if (ride.status !== 'PENDING') return res.status(400).json({ error: 'الرحلة لم تعد متاحة' });
-
-    const updatedRide = await prisma.rideRequest.update({
-      where: { id: rideId },
-      data: { driverId: req.user.userId, status: 'ACCEPTED' },
-      include: {
-        driver: { select: { id: true, firstName: true, lastName: true, phoneNumber: true, driverProfile: true } },
-      },
-    });
+    // القبول الموحد: يخصم العمولة فوراً من محفظة الكابتن + يحدّث الرحلة
+    const updatedRide = await acceptRide(req.user.userId, rideId);
 
     // Notify passenger via Socket.IO
     emitRideStatus(io, rideId, 'ACCEPTED', {
@@ -1251,7 +1233,33 @@ app.post('/api/v1/driver/accept-ride/:rideId', authenticateToken, requireRole('D
     res.json({ message: 'تم قبول الرحلة', ride: updatedRide });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'حدث خطأ أثناء قبول الرحلة' });
+    res.status(500).json({ error: error.message || 'حدث خطأ أثناء قبول الرحلة' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/v1/driver/ride/arrived/{rideId}:
+ *   put:
+ *     summary: Mark driver arrived at pickup (starts rider waiting timer)
+ *     tags: [Driver]
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: Arrival recorded
+ */
+app.put('/api/v1/driver/ride/arrived/:rideId', authenticateToken, requireRole('DRIVER'), async (req, res) => {
+  const { rideId } = req.params;
+  try {
+    const updated = await markRideArrived(req.user.userId, rideId);
+    emitRideStatus(io, rideId, 'ARRIVED', {
+      arrivedAt: updated.arrivedAt,
+      message: 'وصل الكابتن لنقطة الاستلام — بدأ عداد الانتظار',
+    });
+    res.json({ message: 'تم تسجيل الوصول', ride: updated });
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({ error: error.message || 'خطأ في تسجيل الوصول' });
   }
 });
 
@@ -1971,6 +1979,10 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`📚 API Docs: http://0.0.0.0:${PORT}/api-docs`);
   console.log(`🔌 Socket.IO ready\n`);
 });
+
+// ── بدء عمال سياسة الرحلات (استرداد عمولة مؤجل + غرامة تأخير) ──
+// يستخدمون DB كمصدر حقيقة و interval كل دقيقة، مع منع المعالجة المزدوجة.
+startRidePolicyWorkers();
 
 // Graceful shutdown
 process.on('SIGINT', async () => {

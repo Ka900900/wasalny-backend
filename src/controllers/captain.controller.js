@@ -1,4 +1,4 @@
-const { updateLocation, getAvailableRides, acceptRide, startRide, completeRide } = require('../services/captain.service');
+const { updateLocation, getAvailableRides, acceptRide, startRide, completeRide, markRideArrivedForCaptain } = require('../services/captain.service');
 const userRepository = require('../repositories/user.repository');
 const { emitRideStatus, emitDriverLocation, SocketEvents } = require('../config/socket');
 const prisma = require('../config/prisma');
@@ -103,6 +103,24 @@ async function completeRideHandler(req, res, io) {
   } catch (error) {
     console.error(error);
     res.status(400).json({ error: error.message || 'خطأ في إنهاء الرحلة' });
+  }
+}
+
+/**
+ * معالج تسجيل وصول الكابتن لنقطة الاستلام (يبدأ عداد انتظار الراكب).
+ * POST /api/v1/captain/ride/arrived/:rideId
+ */
+async function markRideArrivedHandler(req, res, io) {
+  try {
+    const updated = await markRideArrivedForCaptain(req.user.userId, req.params.rideId);
+    emitRideStatus(io, req.params.rideId, 'ARRIVED', {
+      arrivedAt: updated.arrivedAt,
+      message: 'وصل الكابتن لنقطة الاستلام — بدأ عداد الانتظار',
+    });
+    res.json({ message: 'تم تسجيل الوصول', ride: updated });
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({ error: error.message || 'خطأ في تسجيل الوصول' });
   }
 }
 
@@ -555,6 +573,7 @@ module.exports = {
   acceptRideHandler, 
   startRideHandler, 
   completeRideHandler, 
+  markRideArrivedHandler,
   getEarningsHandler, 
   getDriverRatingsHandler,
   uploadDocuments, // 👈 ضفنا دالة الرفع هنا
