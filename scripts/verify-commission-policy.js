@@ -1,9 +1,9 @@
 /**
  * ─────────────────────────────────────────────────────────────
- * سكربت تحقق من سياسة العمولة / الإلغاء / غرامة التأخير (2026-08-05)
+ * سكربت تحقق من سياسة العمولة / الإلغاء / غرامة التأخير (2026-08-14)
  * ─────────────────────────────────────────────────────────────
  * يستدعي دوال الخدمة الحقيقية مباشرة (بدون HTTP) للتأكد من المنطق:
- *   1) قبول → خصم عمولة (on_accept)
+ *   1) قبول → بدون خصم عمولة (تُحسب عند الإكمال: عمولة = السعر × النسبة)
  *   2) إلغاء كابتن → لا استرداد
  *   3) إلغاء راكب بعد القبول → استرداد مؤجل بعد ساعة (idempotent)
  *   4) وصول + انتهاء عداد → غرامة للكابتن (idempotent)
@@ -155,7 +155,7 @@ async function main() {
   captain2Id = captain2.id;
   createdUserIds.push(captain2Id);
   await prisma.wallet.create({
-    data: { userId: captain2Id, balance: -295, reservedAmount: 0, pendingWithdraw: 0, totalEarned: 0, totalWithdrawn: 0 },
+      data: { userId: captain2Id, balance: -305, reservedAmount: 0, pendingWithdraw: 0, totalEarned: 0, totalWithdrawn: 0 },
   });
   await prisma.driverProfile.create({
     data: {
@@ -181,29 +181,30 @@ async function main() {
   // ═══════════════════════════════════════════════
   // السيناريو 1: قبول → خصم عمولة فوراً
   // ═══════════════════════════════════════════════
-  console.log('── السيناريو 1: قبول الكابتن → خصم العمولة (on_accept) ──');
+  console.log('── السيناريو 1: قبول الكابتن → بدون خصم عمولة (تُحسب عند الإكمال) ──');
   {
-    const ride = await makeRide({ paymentMethod: 'cash', price: 100 });
+    const price = 50;
+    const ride = await makeRide({ paymentMethod: 'cash', price });
     const before = await walletOf(captainId); // 500
     const accepted = await acceptRide(captainId, ride.id);
     const after = await walletOf(captainId);
     const commission = toNum(accepted.commission);
+    const driverEarning = toNum(accepted.driverEarning);
 
     check('الحالة أصبحت ACCEPTED', accepted.status === 'ACCEPTED');
     check('acceptedAt محدد', !!accepted.acceptedAt);
-    check('commissionDeductedAtAccept = true', accepted.commissionDeductedAtAccept === true);
-    check('خصم العمولة من محفظة الكابتن', Math.abs((before - after) - commission) < 0.001,
-      `قبل=${before} بعد=${after} عمولة=${commission}`);
+    check('commissionDeductedAtAccept = false (لا خصم عند القبول)', accepted.commissionDeductedAtAccept === false);
+    check('العمولة = السعر × النسبة (50 × 0.1 = 5)', Math.abs(commission - 5) < 0.001, `عمولة=${commission}`);
+    check('كسب الكابتن = السعر − العمولة (45)', Math.abs(driverEarning - 45) < 0.001, `كسب=${driverEarning}`);
+    check('رصيد الكابتن لم يتغير عند القبول (لا خصم → لا يهبط لسالب)', Math.abs(before - after) < 0.001,
+      `قبل=${before} بعد=${after}`);
 
-    const txn = await prisma.walletTransaction.findFirst({ where: { rideId: ride.id, type: 'COMMISSION' } });
-    check('حركة COMMISSION مسجلة', !!txn);
-    check('metadata.phase = on_accept', txn?.metadata?.phase === 'on_accept');
-    check('قيمة حركة COMMISSION = العمولة', txn && toNum(txn.amount) === commission);
-    check('وصف حركة العمولة: "عمولة قبول الرحلة"', txn?.description === 'عمولة قبول الرحلة');
+    const commissionTxn = await prisma.walletTransaction.findFirst({ where: { rideId: ride.id, type: 'COMMISSION' } });
+    check('لا حركة COMMISSION عند القبول', !commissionTxn);
   }
 
   // ── 1ب: رفض القبول عند تجاوز حد الدين بعد الخصم ──
-  console.log('\n── السيناريو 1ب: رفض القبول عند تجاوز حد الدين بعد الخصم ──');
+  console.log('\n── السيناريو 1ب: رفض القبول بسبب حد الدين (debt limit) ──');
   {
     const ride = await makeRide({ paymentMethod: 'cash', price: 200 });
     const before = await walletOf(captain2Id); // -295
@@ -246,43 +247,56 @@ async function main() {
   // ═══════════════════════════════════════════════
   // السيناريو 3: إلغاء من الراكب بعد القبول → استرداد مؤجل بعد ساعة
   // ═══════════════════════════════════════════════
-  console.log('\n── السيناريو 3: إلغاء الراكب بعد القبول → استرداد مؤجل (ساعة) ──');
+  console.log('\n── السيناريو 3: إلغاء الراكب بعد القبول (سياسة جديدة: لا استرداد عمولة) ──');
   {
     const ride = await makeRide({ paymentMethod: 'cash', price: 100 });
     const accepted = await acceptRide(captainId, ride.id);
-    const commission = toNum(accepted.commission);
     const afterAccept = await walletOf(captainId);
 
     const cancelled = await cancelRide(riderId, ride.id);
     check('الحالة أصبحت CANCELLED', cancelled.status === 'CANCELLED');
     check('cancelledBy = RIDER', cancelled.cancelledBy === 'RIDER');
-    check('pendingCommissionRefundAt مجدول (ليس فورياً)', !!cancelled.pendingCommissionRefundAt);
-    const dueMs = new Date(cancelled.pendingCommissionRefundAt).getTime() - Date.now();
-    check('مدة التأجيل ≈ 60 دقيقة', dueMs > 50 * 60 * 1000 && dueMs <= 70 * 60 * 1000, `المتبقي=${Math.round(dueMs / 60000)} دقيقة`);
-    check('لا COMMISSION_REFUND فوراً', !(await prisma.walletTransaction.findFirst({ where: { rideId: ride.id, type: 'COMMISSION_REFUND' } })));
-    check('رصيد الكابتن لم يُسترد فوراً', (await walletOf(captainId)) === afterAccept);
+    // السياسة الجديدة: لا تُخصم العمولة عند القبول → لا حاجة لأي استرداد
+    check('لا pendingCommissionRefundAt (لا استرداد مجدول)', cancelled.pendingCommissionRefundAt === null);
+    check('لا COMMISSION_REFUND (لم تُخصم عمولة أصلاً)', !(await prisma.walletTransaction.findFirst({ where: { rideId: ride.id, type: 'COMMISSION_REFUND' } })));
+    check('رصيد الكابتن لم يتغير (لم تُخصم عمولة)', (await walletOf(captainId)) === afterAccept,
+      `بعد القبول=${afterAccept} بعد الإلغاء=${await walletOf(captainId)}`);
+  }
 
-    // محاكاة مرور الساعة: نجعل موعد الاستحقاق في الماضي ونشغّل العامل
-    await prisma.rideRequest.update({
-      where: { id: ride.id },
-      data: { pendingCommissionRefundAt: new Date(Date.now() - 1000) },
-    });
+  console.log('\n── السيناريو 3ب: استرداد عمولة رحلة قديمة (commissionDeductedAtAccept=true) ──');
+  {
+    // توافق عكسي: رحلة من السياسة القديمة (خُصمت عمولتها عند القبول) تُسترد عند إلغاء الراكب
+    const commission = 10;
+    const ride = await makeRide({ paymentMethod: 'cash', price: 100 });
+    await acceptRide(captainId, ride.id);
+    const capWallet = await prisma.wallet.findUnique({ where: { userId: captainId } });
+    const capBefore = toNum(capWallet.balance);
+    // نحاكي السياسة القديمة: خصم العمولة عند القبول + تثبيت العلم
+    await prisma.wallet.update({ where: { id: capWallet.id }, data: { balance: { decrement: commission } } });
+    await prisma.walletTransaction.create({ data: { walletId: capWallet.id, type: 'COMMISSION', amount: commission, balanceAfter: toNum((await prisma.wallet.findUnique({ where: { userId: captainId } })).balance), description: 'عمولة قبول الرحلة (محاكاة قديمة)', status: 'COMPLETED', rideId: ride.id, metadata: { phase: 'on_accept_legacy' } } });
+    await prisma.rideRequest.update({ where: { id: ride.id }, data: { commissionDeductedAtAccept: true, commission, driverEarning: 90 } });
+    const afterDeduct = await walletOf(captainId);
+    check('محاكاة خصم العمولة عند القبول (رصيد نقص)', Math.abs(capBefore - afterDeduct - commission) < 0.001,
+      `قبل=${capBefore} بعد الخصم=${afterDeduct}`);
+
+    const cancelled = await cancelRide(riderId, ride.id);
+    check('pendingCommissionRefundAt مجدول (رحلة قديمة)', !!cancelled.pendingCommissionRefundAt);
+    check('لا COMMISSION_REFUND فوراً', !(await prisma.walletTransaction.findFirst({ where: { rideId: ride.id, type: 'COMMISSION_REFUND' } })));
+
+    await prisma.rideRequest.update({ where: { id: ride.id }, data: { pendingCommissionRefundAt: new Date(Date.now() - 1000) } });
     await processDueCommissionRefunds();
     const refundTxn = await prisma.walletTransaction.findFirst({ where: { rideId: ride.id, type: 'COMMISSION_REFUND' } });
-    check('حركة COMMISSION_REFUND بعد الساعة', !!refundTxn);
+    check('حركة COMMISSION_REFUND بعد الساعة (رحلة قديمة)', !!refundTxn);
     check('قيمة الاسترداد = العمولة', refundTxn && toNum(refundTxn.amount) === commission);
-    check('وصف الاسترداد', refundTxn?.description === 'استرداد عمولة بعد إلغاء الراكب');
     const afterRefund = await walletOf(captainId);
-    check('العمولة أُعيدت للكابتن', Math.abs(afterRefund - (afterAccept + commission)) < 0.001,
-      `بعد القبول=${afterAccept} بعد الاسترداد=${afterRefund}`);
+    check('العمولة أُعيدت للكابتن (رصيده يرجع لما قبل الخصم)', Math.abs(afterRefund - capBefore) < 0.001,
+      `قبل=${capBefore} بعد=${afterRefund}`);
     const rideAfter = await prisma.rideRequest.findUnique({ where: { id: ride.id }, select: { commissionRefundedAt: true } });
     check('commissionRefundedAt محدد', !!rideAfter?.commissionRefundedAt);
 
-    // منع الاسترداد المزدوج
     await processDueCommissionRefunds();
     const count = await prisma.walletTransaction.count({ where: { rideId: ride.id, type: 'COMMISSION_REFUND' } });
     check('لا استرداد مزدوج (مرة واحدة فقط)', count === 1);
-    check('رصيد الكابتن لم يتغير بعد التشغيل الثاني', (await walletOf(captainId)) === afterRefund);
   }
 
   // ═══════════════════════════════════════════════
@@ -330,7 +344,7 @@ async function main() {
   // ═══════════════════════════════════════════════
   // السيناريو 5: إكمال الرحلة → بدون عمولة مكررة
   // ═══════════════════════════════════════════════
-  console.log('\n── السيناريو 5أ: إكمال رحلة (wallet) → بدون عمولة مكررة ──');
+  console.log('\n── السيناريو 5أ: إكمال رحلة (wallet) → الكابتن يستلم صافي (السعر − العمولة) ──');
   {
     const price = 100;
     const ride = await makeRide({ paymentMethod: 'wallet', price });
@@ -344,42 +358,46 @@ async function main() {
 
     const { updatedRide } = await settleRide(null, { rideId: ride.id, driverId: captainId });
     check('الحالة COMPLETED و isPaid', updatedRide.status === 'COMPLETED' && updatedRide.isPaid === true);
+    check('العمولة على الرحلة = السعر × النسبة', Math.abs(toNum(updatedRide.commission) - commission) < 0.001, `عمولة=${toNum(updatedRide.commission)}`);
+    check('كسب الكابتن على الرحلة = السعر − العمولة', Math.abs(toNum(updatedRide.driverEarning) - (price - commission)) < 0.001);
 
     // الراكب دفع السعر كاملاً
     check('خصم price من محفظة الراكب', (await walletOf(riderId)) === riderBefore - price,
       `قبل=${riderBefore} بعد=${await walletOf(riderId)}`);
 
-    // الكابتن استلم السعر الكامل (لأن العمولة اتخصمت عند القبول)
+    // الكابتن يستلم صافي أرباحه = السعر − العمولة (لا خصم ثانٍ، ولا رصيد سالب)
     const capAfter = await walletOf(captainId);
-    check('إضافة السعر الكامل للكابتن (بدون خصم عمولة ثانٍ)', Math.abs(capAfter - (capBefore + price)) < 0.001,
+    check('إضافة صافي الكابتن (السعر − العمولة) لمحفظته', Math.abs(capAfter - (capBefore + (price - commission))) < 0.001,
       `قبل=${capBefore} بعد=${capAfter}`);
     check('صافي الكابتن = driverEarning', Math.abs((capAfter - capBefore) - (price - commission)) < 0.001,
       `صافي=${capAfter - capBefore} driverEarning=${price - commission}`);
 
-    // العمولة خُصمت مرة واحدة فقط (عند القبول) وليس عند التسوية
+    // لا حركة COMMISSION تخصم رصيد الكابتن (العمولة تُسجَّل على الرحلة فقط)
     const commissionTxns = await prisma.walletTransaction.findMany({ where: { rideId: ride.id, type: 'COMMISSION' } });
-    check('لا توجد حركة COMMISSION عند التسوية (مرة واحدة فقط)', commissionTxns.length === 1);
-    check('حركة COMMISSION الوحيدة phase=on_accept', commissionTxns[0]?.metadata?.phase === 'on_accept');
+    check('لا توجد حركة COMMISSION تخصم رصيد الكابتن', commissionTxns.length === 0);
 
     const earningTxn = await prisma.walletTransaction.findFirst({ where: { rideId: ride.id, type: 'DRIVER_EARNING' } });
-    check('حركة DRIVER_EARNING = السعر الكامل', earningTxn && toNum(earningTxn.amount) === price);
+    check('حركة DRIVER_EARNING = صافي الكابتن (السعر − العمولة)', earningTxn && Math.abs(toNum(earningTxn.amount) - (price - commission)) < 0.001,
+      `المبلغ=${earningTxn && toNum(earningTxn.amount)}`);
   }
 
-  console.log('\n── السيناريو 5ب: إكمال رحلة (cash) → لا خصم عمولة ثانٍ ──');
+  console.log('\n── السيناريو 5ب: إكمال رحلة (cash) → الكابتن يستلم صافي (لا خصم) ──');
   {
     const price = 100;
     const ride = await makeRide({ paymentMethod: 'cash', price });
     const accepted = await acceptRide(captainId, ride.id);
+    const commission = toNum(accepted.commission);
     const capBefore = await walletOf(captainId);
 
     await prisma.rideRequest.update({ where: { id: ride.id }, data: { status: 'STARTED' } });
     const { updatedRide } = await settleRide(null, { rideId: ride.id, driverId: captainId });
     check('الحالة COMPLETED و isPaid', updatedRide.status === 'COMPLETED' && updatedRide.isPaid === true);
-    check('رصيد الكابتن لم يتغير عند التسوية (لا خصم ثانٍ)', (await walletOf(captainId)) === capBefore,
+    // الكابتن قبض الكاش وله صافي = السعر − العمولة → يُضاف لرصيده مباشرةً (لا خصم → لا سالب)
+    check('إضافة صافي الكابتن (السعر − العمولة) لمحفظته (كاش)', (await walletOf(captainId)) === capBefore + (price - commission),
       `قبل=${capBefore} بعد=${await walletOf(captainId)}`);
 
     const commissionTxns = await prisma.walletTransaction.findMany({ where: { rideId: ride.id, type: 'COMMISSION' } });
-    check('عمولة واحدة فقط (عند القبول)', commissionTxns.length === 1);
+    check('لا حركة COMMISSION تخصم رصيد الكابتن (كاش)', commissionTxns.length === 0);
     const profile = await prisma.driverProfile.findUnique({ where: { userId: captainId }, select: { totalTrips: true } });
     check('totalTrips زادت', profile && profile.totalTrips > 0);
   }

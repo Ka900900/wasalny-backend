@@ -336,9 +336,11 @@ async function createChatRoom(rideId, riderId, driverId) {
 }
 
 /**
- * قبول رحلة من كابتن — خصم العمولة فوراً من محفظة الكابتن.
- * (سياسة 2026-08-05): عند القبول تُخصم العمولة (price × commissionRate)
- * وتُسجَّل كحركة COMMISSION بمرحلة on_accept، ولا تُسترد عند إلغاء الكابتن.
+ * قبول رحلة من كابتن — بدون أي خصم من المحفظة عند القبول.
+ * العمولة تُحسب من سعر الرحلة الفعلي وتُسجَّل فقط عند الإكمال (COMPLETED):
+ *   عمولة_الشركة = السعر × نسبة_العمولة
+ *   كسب_الكابتن  = السعر − عمولة_الشركة
+ * لا نخصم شيئاً من رصيد الكابتن عند القبول حتى لا يهبط لسالب بسبب القبول وحده.
  * تُستدعى من مسار الكابتن (captain.service.acceptRide) ومن مسار الكابتن القديم
  * (driver accept-ride في index.js) لضمان نفس السلوك المالي.
  */
@@ -371,33 +373,9 @@ async function acceptRide(userId, rideId) {
       });
     }
 
-    // خصم العمولة فوراً من محفظة الكابتن
-    const capNewBal = capWallet.balance.minus(commission);
-    const minBalance = await getWalletLimit('CAPTAIN_MIN_BALANCE', DEFAULT_LIMITS.CAPTAIN_MIN_BALANCE);
-    // لو الرصيد بعد الخصم أقل من حد الدين → ارفض القبول برسالة واضحة
-    if (capNewBal.lt(minBalance)) {
-      const err = new Error(
-        `لا يمكن قبول الرحلة: خصم عمولة ${commission.toString()} ج.م سيجعل رصيدك أقل من حد الدين (${Math.abs(minBalance)} ج). اشحن المحفظة أولاً`
-      );
-      err.code = 'WALLET_DEBT_LIMIT';
-      throw err;
-    }
-
-    await tx.wallet.update({ where: { id: capWallet.id }, data: { balance: capNewBal } });
-    await tx.walletTransaction.create({
-      data: {
-        walletId: capWallet.id,
-        type: 'COMMISSION',
-        amount: commission,
-        balanceAfter: capNewBal,
-        description: 'عمولة قبول الرحلة',
-        status: 'COMPLETED',
-        rideId: ride.id,
-        metadata: { phase: 'on_accept', rate: rate.toString() },
-      },
-    });
-    console.log(`💰 COMMISSION (on_accept) ${commission.toString()} ج.م خُصمت من محفظة الكابتن ${userId} للرحلة ${ride.id}`);
-
+    // ⚠️ لا خصم عمولة عند القبول. العمولة تُحسب من سعر الرحلة الفعلي وتُسجَّل
+    // عند الإكمال (COMPLETED) فقط — حتى لا يهبط رصيد الكابتن لسالب بسبب القبول وحده
+    // (انظر _settleRideCore). نكتفي هنا بتخزين قيمة العمولة المتوقَّعة + تثبيت القبول.
     const updated = await tx.rideRequest.update({
       where: { id: ride.id },
       data: {
@@ -405,13 +383,14 @@ async function acceptRide(userId, rideId) {
         commissionRate: rate,
         driverEarning,
         acceptedAt: new Date(),
-        commissionDeductedAtAccept: true,
+        commissionDeductedAtAccept: false,
       },
       include: {
         driver: { select: { id: true, firstName: true, lastName: true, phoneNumber: true, driverProfile: true } },
       },
     });
 
+    console.log(`✅ acceptRide ${ride.id}: الكابتن ${userId} قبل الرحلة — العمولة (${commission.toString()} ج.م = ${rate.toString()} من السعر) تُحسم عند الإكمال فقط`);
     return updated;
   });
 }
@@ -518,8 +497,10 @@ async function cancelRide(userId, rideId) {
     const data = { status: 'CANCELLED', cancelledBy, cancelledAt: now };
 
     if (isRider) {
-      // إلغاء من الراكب: لا نسترد العمولة فوراً — نجدد استرداداً مؤجلاً بعد 60 دقيقة
-      if (!fresh.commissionRefundedAt && !fresh.pendingCommissionRefundAt) {
+      // إلغاء من الراكب + العمولة خُصمت عند القبول (السياسة القديمة فقط):
+      // نجدول استرداداً مؤجلاً بعد 60 دقيقة. في السياسة الجديدة لا تُخصم
+      // العمولة عند القبول أصلاً → لا حاجة لأي استرداد (ولا حالة معلّقة).
+      if (fresh.commissionDeductedAtAccept && !fresh.commissionRefundedAt && !fresh.pendingCommissionRefundAt) {
         data.pendingCommissionRefundAt = new Date(now.getTime() + COMMISSION_REFUND_DELAY_MINUTES * 60 * 1000);
       }
 
@@ -624,14 +605,17 @@ async function rateRide(userId, { rideId, toUserId, rating, comment }) {
 // كل الحركات المالية تُسجَّل كمعاملات على محافظ العميل/الكابتن/المنصة،
 // ولا يتم المساس بـ DriverProfile.balance (مهمَل — المحفظة هي المصدر الوحيد للأرصدة).
 //
-// سياسة 2026-08-05: العمولة تُخصم فوراً عند القبول (phase: on_accept).
-// لذلك عند الإكمال لا تُخصم عمولة الشركة مرة ثانية:
-//   - wallet:  خصم price من الراكب، وإضافة price للكابتن
-//              (صافي الكابتن = price − العمولة المخصومة عند القبول = driverEarning)
-//   - cash:    لا خصم عمولة ثانٍ (اتخصمت عند القبول) — تحديث إحصائيات فقط
-//   - card:    إضافة price للكابتن (نفس منطق wallet)
-// الرحلات القديمة (قبل السياسة، commissionDeductedAtAccept=false) تحافظ
-// على السلوك السابق حتى لا تُكسَر الرحلات الجارية أثناء الترقية.
+// سياسة العمولة (2026-08-14): العمولة تُحسب عند الإكمال فقط من سعر الرحلة الفعلي:
+//   عمولة_الشركة = السعر × نسبة_العمولة
+//   كسب_الكابتن  = السعر − عمولة_الشركة
+// ولا يُخصم أي مبلغ من رصيد الكابتن عند القبول (كان ذلك يُسبب رصيداً سالباً
+// بسبب القبول وحده). عند الإكمال تُضاف أرباح الكابتن (driverEarning) لمحفظته
+// مباشرةً — فلا يهبط الرصيد لسالب بسبب «نسبة من رحلة» محسوبة/مخصومة مرتين.
+//   - wallet:  خصم price من الراكب، وإضافة driverEarning للكابتن
+//   - cash:    إضافة driverEarning للكابتن (قبض الكاش فعلياً) — لا خصم عمولة
+//   - card:    إضافة driverEarning للكابتن (نفس منطق wallet)
+// التوافق مع الرحلات القديمة (commissionDeductedAtAccept=true) المقبولة قبل
+// هذا التاريخ: تُضاف price كاملة للكابتن عند الإكمال لتعادل صافيها بعد الخصم القديم.
 async function _settleRideCore(tx, { rideId, driverId }) {
   // جلب الرحلة مع حقل isPaid للتحقق من عدم التكرار
   const ride = await tx.rideRequest.findUnique({
@@ -669,7 +653,8 @@ async function _settleRideCore(tx, { rideId, driverId }) {
     driverEarning = new Prisma.Decimal(ride.driverEarning || 0);
     rate = ride.commissionRate || new Prisma.Decimal(0);
   } else {
-    // رحلة قديمة (قبل السياسة): نحافظ على الحساب السابق
+    // السياسة الجديدة: نحسب العمولة من السعر الفعلي عند الإكمال
+    // (عمولة_الشركة = السعر × نسبة_العمولة، كسب_الكابتن = السعر − العمولة)
     rate = await getCommissionRate(driverId);
     commission = price.mul(rate).toDecimalPlaces(2);
     driverEarning = price.minus(commission);
@@ -699,8 +684,8 @@ async function _settleRideCore(tx, { rideId, driverId }) {
       },
     });
 
-    // إضافة للكابتن: العمولة اتخصمت عند القبول → يُضاف له السعر الكامل
-    // (صافي الربح = السعر − العمولة المخصومة سابقاً = driverEarning)
+    // إضافة للكابتن: صافي أرباحه = driverEarning = السعر − العمولة.
+    // (للرحلات القديمة التي خُصمت عمولتها عند القبول نضيف السعر كاملاً لتعادل الصافي)
     const capWallet = await tx.wallet.findUnique({ where: { userId: ride.driverId } });
     if (!capWallet) throw new Error('محفظة الكابتن غير موجودة');
     const capCredit = commissionDeducted ? price : driverEarning;
@@ -737,18 +722,10 @@ async function _settleRideCore(tx, { rideId, driverId }) {
       });
       console.log(`✅ كاش ${ride.id}: العمولة خُصمت عند القبول — لا خصم ثانٍ من الكابتن`);
     } else {
-      // رحلة قديمة: خصم العمولة الآن كما في السلوك السابق
-      const capNewBal = capWallet.balance.minus(commission);
-      const minBalance = await getWalletLimit(
-        'CAPTAIN_MIN_BALANCE',
-        DEFAULT_LIMITS.CAPTAIN_MIN_BALANCE
-      );
-      // لو (الرصيد - العمولة) < حد الدين → ارفض التسوية حتى لا يزداد الدين
-      if (capNewBal.lt(minBalance)) {
-        throw new Error(
-          `رصيدك وصل لحد الدين (${Math.abs(minBalance)} ج). اشحن المحفظة لإكمال الرحلات`
-        );
-      }
+      // سياسة جديدة: العمولة لا تُخصم عند القبول ولا هنا. الكابتن قبض الكاش
+      // وله صافي = السعر − العمولة. نضيف الصافي لمحفظته مباشرةً (لا خصم →
+      // الرصيد لا يهبط لسالب بسبب «نسبة من رحلة» محسوبة/مخصومة مرتين).
+      const capNewBal = capWallet.balance.plus(driverEarning);
       await tx.wallet.update({
         where: { id: capWallet.id },
         data: { balance: capNewBal, totalEarned: { increment: driverEarning } },
@@ -756,13 +733,13 @@ async function _settleRideCore(tx, { rideId, driverId }) {
       await tx.walletTransaction.create({
         data: {
           walletId: capWallet.id,
-          type: 'COMMISSION',
-          amount: commission,
+          type: 'DRIVER_EARNING',
+          amount: driverEarning,
           balanceAfter: capNewBal,
-          description: `عمولة التطبيق ${rate.toString()} - الرحلة ${ride.id} (كاش)`,
+          description: `أرباح الرحلة ${ride.id} (كاش) — العمولة ${commission.toString()} ج.م من نصيب الشركة`,
           status: 'COMPLETED',
           rideId: ride.id,
-          metadata: { rate: rate.toString(), net: driverEarning.toString(), phase: 'on_settle_legacy' },
+          metadata: { net: driverEarning.toString(), commission: commission.toString(), commissionDeductedAtAccept: false },
         },
       });
     }
