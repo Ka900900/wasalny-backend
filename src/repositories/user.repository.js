@@ -1,6 +1,7 @@
 const prisma = require('../config/prisma');
 const { assertCanAcceptRides } = require('../config/wallet.constants');
 const { createCaptainPendingNotification } = require('../services/notification.service');
+const { calculateCaptainStatus } = require('../services/captain-status.service');
 
 async function findByFirebaseUid(firebaseUid) {
   return prisma.user.findUnique({ where: { firebaseUid } });
@@ -34,39 +35,73 @@ async function updateFcmToken(id, fcmToken) {
 
 async function findCaptainsWithTokens() {
   // الكابتنات المتاحون فقط (online): role = DRIVER + نشط + لديه FCM token
-  // + DriverProfile.isAvailable === true (أي أن الكابتن مفتوح لاستقبال الرحلات)
-  // + verificationStatus === APPROVED (معتمد فقط لا يتلقى إشعارات رحلات جديدة).
-  // هذا يمنع إرسال إشعار رحلة جديدة لكابتن Offline / غير متاح / غير معتمد.
-  return prisma.user.findMany({
+  // + DriverProfile.isAvailable === true
+  // + status المحسوب ليس DOCS_EXPIRED (ولا_PENDING / REJECTED)
+  // هذا يمنع إرسال إشعار رحلة جديدة لكابتن Offline / غير متاح / غير معتمد أو منتهي مهلة الأوراق.
+  const users = await prisma.user.findMany({
     where: {
       role: 'DRIVER',
       isActive: true,
       fcmToken: { not: null },
-      driverProfile: { is: { isAvailable: true, verificationStatus: 'APPROVED' } },
+      driverProfile: { is: { isAvailable: true } },
     },
-    select: { id: true, fcmToken: true },
+    select: {
+      id: true,
+      fcmToken: true,
+      createdAt: true,
+      driverProfile: {
+        select: {
+          verificationStatus: true,
+          gracePeriodEndDate: true,
+          idPhotoFront: true,
+          idPhotoBack: true,
+          licensePhoto: true,
+          facePhoto: true,
+          insurancePhoto: true,
+          idCardBackUrl: true,
+          licenseBackUrl: true,
+          vehicleLicenseFrontUrl: true,
+          vehicleLicenseBackUrl: true,
+          criminalRecordUrl: true,
+          drugTestUrl: true,
+        },
+      },
+    },
   });
+
+  return users
+    .filter((user) => user.driverProfile && calculateCaptainStatus({ ...user.driverProfile, user: { createdAt: user.createdAt } }) === 'APPROVED')
+    .map((user) => ({ id: user.id, fcmToken: user.fcmToken }));
 }
 
 async function setDriverAvailability(userId, isAvailable) {
-  // حارس حد الدين: عند التفعيل (online) يُمنع إذا كان الرصيد عند حد الدين أو أقل
-  if (isAvailable) {
-    await assertCanAcceptRides(userId);
-  }
-
   // 1. التحقق من وجود DriverProfile مسبقاً
   const existingProfile = await prisma.driverProfile.findUnique({ where: { userId } });
   if (existingProfile) {
+    if (isAvailable && calculateCaptainStatus(existingProfile) === 'DOCS_EXPIRED') {
+      const error = new Error('تم حظرك لعدم استكمال الأوراق خلال المهلة المحددة');
+      error.code = 'DOCS_EXPIRED';
+      throw error;
+    }
+
     // ── حارس التوثيق: الكابتن المعلق/المرفوض لا يمكنه الظهور كمتاح ──
     if (isAvailable && existingProfile.verificationStatus !== 'APPROVED') {
       const stateLabel = existingProfile.verificationStatus === 'REJECTED' ? 'مرفوض' : 'قيد المراجعة';
       throw new Error(`لم يتم اعتماد حسابك بعد (الحالة: ${stateLabel}). يرجى الانتظار حتى تراجع الإدارة مستنداتك.`);
+    }
+    // حارس حد الدين: عند التفعيل (online) يُمنع إذا كان الرصيد عند حد الدين أو أقل
+    if (isAvailable) {
+      await assertCanAcceptRides(userId);
     }
     // الـ Profile موجود → تحديث حالة التوفر فقط
     return prisma.driverProfile.update({
       where: { userId },
       data: { isAvailable: !!isAvailable },
     });
+  }
+
+  if (isAvailable) {
+    await assertCanAcceptRides(userId);
   }
 
   // 2. الـ Profile غير موجود → التحقق من وجود مركبة لإنشاء Profile جديد

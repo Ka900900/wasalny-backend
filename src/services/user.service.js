@@ -1,4 +1,5 @@
 const prisma = require('../config/prisma');
+const { withCalculatedCaptainStatus } = require('./captain-status.service');
 
 async function getProfile(userId) {
   const user = await prisma.user.findUnique({
@@ -18,6 +19,14 @@ async function getProfile(userId) {
   });
   if (!user) {
     throw new Error('المستخدم غير موجود');
+  }
+
+  if (user.driverProfile) {
+    user.driverProfile = withCalculatedCaptainStatus({
+      ...user.driverProfile,
+      userCreatedAt: user.createdAt,
+    });
+    user.status = user.driverProfile.status;
   }
 
   // ── جلب بيانات المركبة من جدول Vehicle (إن وجدت) ──

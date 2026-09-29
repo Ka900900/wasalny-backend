@@ -3,6 +3,7 @@ const userRepository = require('../repositories/user.repository');
 const { emitRideStatus, emitDriverLocation, SocketEvents } = require('../config/socket');
 const prisma = require('../config/prisma');
 const { uploadToCloudinary } = require('../services/upload.service'); // تأكد إن المسار صح
+const { calculateCaptainStatus } = require('../services/captain-status.service');
 
 async function updateLocationHandler(req, res, io) {
   try {
@@ -58,6 +59,12 @@ async function toggleAvailabilityHandler(req, res, io) {
     });
   } catch (error) {
     console.error(error);
+    if (error.code === 'DOCS_EXPIRED') {
+      return res.status(403).json({
+        code: 'DOCS_EXPIRED',
+        error: 'تم حظرك لعدم استكمال الأوراق خلال المهلة المحددة',
+      });
+    }
     res.status(400).json({ error: error.message || 'حدث خطأ أثناء تغيير حالة التوفر' });
   }
 }
@@ -428,6 +435,9 @@ async function getVerificationStatusHandler(req, res) {
         licenseNumber: true,
         criminalRecordUrl: true,
         drugTestUrl: true,
+        createdAt: true,
+        gracePeriodEndDate: true,
+        user: { select: { createdAt: true } },
       },
     });
 
@@ -447,15 +457,18 @@ async function getVerificationStatusHandler(req, res) {
       'criminalRecordUrl', 'drugTestUrl',
     ];
     const uploadedDocs = documentFields.filter((f) => !!profile[f]);
+    const verificationStatus = calculateCaptainStatus(profile);
+    const { user, ...documentProfile } = profile;
 
     res.json({
       success: true,
-      verificationStatus: profile.verificationStatus,
+      status: verificationStatus,
+      verificationStatus,
       rejectionReason: profile.rejectionReason,
       documents: {
         totalRequired: documentFields.length,
         uploaded: uploadedDocs.length,
-        fields: profile,
+        fields: documentProfile,
       },
     });
   } catch (error) {

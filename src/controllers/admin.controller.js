@@ -7,6 +7,7 @@ const {
 } = require('../services/wallet.service');
 const { sendSingleNotification } = require('../services/fcm.service');
 const { resetConfigCache } = require('../services/ride.service');
+const { calculateCaptainStatus } = require('../services/captain-status.service');
 
 async function listWithdrawalsHandler(req, res) {
   try {
@@ -255,41 +256,48 @@ async function listAllCaptainsHandler(req, res) {
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
     const skip = (pageNum - 1) * limitNum;
+    const normalizedStatus = status ? String(status).toUpperCase() : null;
+    const allowedStatuses = ['PENDING', 'APPROVED', 'REJECTED', 'DOCS_EXPIRED'];
 
-    // بناء شرط التصفية
-    const allowedStatuses = ['PENDING', 'APPROVED', 'REJECTED'];
-    const where = {};
-    if (status && allowedStatuses.includes(status.toUpperCase())) {
-      where.verificationStatus = status.toUpperCase();
-    }
-
-    // جلب العدد الكلي والصفحة الحالية
-    const [total, captains] = await Promise.all([
-      prisma.driverProfile.count({ where }),
-      prisma.driverProfile.findMany({
-        where,
-        include: {
-          user: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              phoneNumber: true,
-              email: true,
-              avatarUrl: true,
-              isActive: true,
-              createdAt: true,
-            },
+    const captains = await prisma.driverProfile.findMany({
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            phoneNumber: true,
+            email: true,
+            avatarUrl: true,
+            isActive: true,
+            createdAt: true,
           },
         },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limitNum,
-      }),
-    ]);
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const enrichedCaptains = captains.map((captain) => {
+      const calculatedStatus = calculateCaptainStatus({
+        ...captain,
+        user: captain.user ? { createdAt: captain.user.createdAt } : null,
+      });
+      return {
+        ...captain,
+        status: calculatedStatus,
+        verificationStatus: calculatedStatus,
+      };
+    });
+
+    const filteredCaptains = normalizedStatus && allowedStatuses.includes(normalizedStatus)
+      ? enrichedCaptains.filter((captain) => captain.status === normalizedStatus)
+      : enrichedCaptains;
+
+    const total = filteredCaptains.length;
+    const paginatedCaptains = filteredCaptains.slice(skip, skip + limitNum);
 
     res.json({
-      captains,
+      captains: paginatedCaptains,
       pagination: {
         total,
         page: pageNum,
@@ -300,6 +308,47 @@ async function listAllCaptainsHandler(req, res) {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'خطأ في جلب قائمة الكباتن' });
+  }
+}
+
+async function extendCaptainGracePeriodHandler(req, res) {
+  try {
+    const { id } = req.params;
+    const { extraDays } = req.body;
+    const days = Number(extraDays);
+
+    if (!Number.isInteger(days) || days < 1) {
+      return res.status(400).json({ error: 'extraDays يجب أن يكون عدد صحيح أكبر من أو يساوي 1' });
+    }
+
+    const profile = await prisma.driverProfile.findUnique({
+      where: { userId: id },
+      include: {
+        user: { select: { createdAt: true } },
+      },
+    });
+
+    if (!profile) {
+      return res.status(404).json({ error: 'هذا الكابتن غير موجود' });
+    }
+
+    const baseDate = profile.gracePeriodEndDate ? new Date(profile.gracePeriodEndDate) : new Date(profile.user.createdAt || Date.now());
+    const updatedEndDate = new Date(baseDate.getTime() + (days * 24 * 60 * 60 * 1000));
+
+    const updatedProfile = await prisma.driverProfile.update({
+      where: { userId: id },
+      data: { gracePeriodEndDate: updatedEndDate },
+    });
+
+    res.json({
+      message: 'تم تمديد مهلة الأوراق بنجاح',
+      captainId: id,
+      gracePeriodEndDate: updatedProfile.gracePeriodEndDate,
+      extraDays: days,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message || 'خطأ في توسيع مهلة الأوراق' });
   }
 }
 
@@ -357,10 +406,17 @@ async function getCaptainDetailsHandler(req, res) {
       },
     });
 
+    const calculatedStatus = calculateCaptainStatus({
+      ...profile,
+      user: profile.user ? { createdAt: profile.user.createdAt } : null,
+    });
+
     res.json({
       captain: {
         ...profile,
         vehicle,
+        status: calculatedStatus,
+        verificationStatus: calculatedStatus,
         totalCompletedRides: profile.user.ridesAsDriver?.length || 0,
       },
     });
@@ -380,10 +436,11 @@ async function getAdminStatsHandler(req, res) {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-    const [totalRides, onlineCaptains, todayRevenue, openTickets] = await Promise.all([
+    const [totalRides, allAvailableCaptains, todayRevenue, openTickets] = await Promise.all([
       prisma.rideRequest.count(),
-      prisma.driverProfile.count({
-        where: { isAvailable: true, verificationStatus: 'APPROVED' },
+      prisma.driverProfile.findMany({
+        where: { isAvailable: true },
+        include: { user: { select: { createdAt: true } } },
       }),
       prisma.rideRequest.aggregate({
         _sum: { price: true },
@@ -393,6 +450,14 @@ async function getAdminStatsHandler(req, res) {
         where: { status: { notIn: ['RESOLVED', 'CLOSED'] } },
       }),
     ]);
+
+    const onlineCaptains = allAvailableCaptains.filter((captain) => {
+      const status = calculateCaptainStatus({
+        ...captain,
+        user: captain.user ? { createdAt: captain.user.createdAt } : null,
+      });
+      return status === 'APPROVED';
+    }).length;
 
     res.json({
       totalRides,
@@ -716,6 +781,7 @@ module.exports = {
   approveCaptainHandler,
   rejectCaptainHandler,
   listAllCaptainsHandler,
+  extendCaptainGracePeriodHandler,
   getCaptainDetailsHandler,
   getAdminStatsHandler,
   listRecentRidesHandler,

@@ -187,8 +187,9 @@ model DriverProfile {
   drugTestUrl      String?   // تحليل المخدرات
 
   // ── Captain verification (admin approval) ──
-  verificationStatus VerificationStatus @default(PENDING)
-  rejectionReason    String?
+  verificationStatus  VerificationStatus @default(PENDING)
+  rejectionReason     String?
+  gracePeriodEndDate  DateTime?          @map("grace_period_end_date") @db.Timestamptz(6)
 
   isAvailable    Boolean         @default(true)
   currentLat     Float?

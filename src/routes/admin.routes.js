@@ -13,6 +13,7 @@ const {
   approveCaptainHandler,
   rejectCaptainHandler,
   listAllCaptainsHandler,
+  extendCaptainGracePeriodHandler,
   getCaptainDetailsHandler,
   getAdminStatsHandler,
   listRecentRidesHandler,
@@ -27,7 +28,7 @@ const {
   getSettingsHandler,
   updateSettingsHandler,
 } = require('../controllers/admin.controller');
-const { rejectCaptainSchema } = require('../validators/admin.validator');
+const { rejectCaptainSchema, extendCaptainGracePeriodSchema } = require('../validators/admin.validator');
 const {
   listConversationsHandler,
   getAdminUserMessagesHandler,
@@ -68,6 +69,7 @@ router.patch('/support/tickets/:id/status', authenticateToken, requireRole('ADMI
 //  مسارات توثيق الكباتن (Captain Verification)
 // ═══════════════════════════════════════════════════════
 router.get('/captains', authenticateToken, requireRole('ADMIN'), listAllCaptainsHandler);
+router.post('/captains/:id/extend-grace-period', authenticateToken, requireRole('ADMIN'), validate(extendCaptainGracePeriodSchema), extendCaptainGracePeriodHandler);
 router.get('/captains/pending', authenticateToken, requireRole('ADMIN'), listPendingCaptainsHandler);
 router.get('/captains/:userId', authenticateToken, requireRole('ADMIN'), getCaptainDetailsHandler);
 router.post('/captains/:userId/approve', authenticateToken, requireRole('ADMIN'), approveCaptainHandler);
