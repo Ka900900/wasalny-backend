@@ -21,18 +21,31 @@ async function register(req, res, next) {
       });
     }
 
-    // 2️⃣ تشفير كلمة المرور
+    // 2️⃣ التحقق المسبق من تكرار رقم الهاتف
+    const normalizedPhone = typeof phoneNumber === "string" ? phoneNumber.trim() : "";
+    if (normalizedPhone) {
+      const phoneExists = await prisma.user.findUnique({ where: { phoneNumber: normalizedPhone } });
+      if (phoneExists) {
+        return res.status(409).json({
+          success: false,
+          code: "PHONE_EXISTS",
+          message: "رقم الهاتف مسجل بالفعل. سجل دخول بدلاً من إنشاء حساب جديد.",
+        });
+      }
+    }
+
+    // 3️⃣ تشفير كلمة المرور
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // 3️⃣ إنشاء المستخدم
+    // 4️⃣ إنشاء المستخدم
     const user = await prisma.user.create({
       data: {
         email: cleanEmail,
         password: hashedPassword,
         firstName,
         lastName,
-        phoneNumber: phoneNumber || null,
+        phoneNumber: normalizedPhone || null,
         role: "RIDER",
         isActive: true,
       },
@@ -69,6 +82,17 @@ async function register(req, res, next) {
       },
     });
   } catch (error) {
+    if (error?.code === "P2002") {
+      const targets = Array.isArray(error?.meta?.target) ? error.meta.target : [];
+      if (targets.includes("phoneNumber")) {
+        return res.status(409).json({
+          success: false,
+          code: "PHONE_EXISTS",
+          message: "رقم الهاتف مسجل بالفعل. سجل دخول بدلاً من إنشاء حساب جديد.",
+        });
+      }
+    }
+
     console.error("❌ Register Error:", error);
     return res.status(500).json({
       success: false,

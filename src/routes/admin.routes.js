@@ -13,6 +13,7 @@ const {
   approveCaptainHandler,
   rejectCaptainHandler,
   listAllCaptainsHandler,
+  updateDriverStatusHandler,
   extendCaptainGracePeriodHandler,
   getCaptainDetailsHandler,
   getAdminStatsHandler,
@@ -69,6 +70,8 @@ router.patch('/support/tickets/:id/status', authenticateToken, requireRole('ADMI
 //  مسارات توثيق الكباتن (Captain Verification)
 // ═══════════════════════════════════════════════════════
 router.get('/captains', authenticateToken, requireRole('ADMIN'), listAllCaptainsHandler);
+router.put('/drivers/:id/status', authenticateToken, requireRole('ADMIN'), updateDriverStatusHandler);
+router.patch('/captains/:id/status', authenticateToken, requireRole('ADMIN'), updateDriverStatusHandler);
 router.post('/captains/:id/extend-grace-period', authenticateToken, requireRole('ADMIN'), validate(extendCaptainGracePeriodSchema), extendCaptainGracePeriodHandler);
 router.get('/captains/pending', authenticateToken, requireRole('ADMIN'), listPendingCaptainsHandler);
 router.get('/captains/:userId', authenticateToken, requireRole('ADMIN'), getCaptainDetailsHandler);

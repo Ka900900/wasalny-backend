@@ -355,6 +355,75 @@ async function extendCaptainGracePeriodHandler(req, res) {
 // ═══════════════════════════════════════════════════════
 //  عرض تفاصيل كابتن محدّد (للمسؤول)
 // ═══════════════════════════════════════════════════════
+async function updateDriverStatusHandler(req, res) {
+  try {
+    const { id } = req.params;
+    const { isBlocked, reason } = req.body;
+
+    if (typeof isBlocked !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        error: 'isBlocked مطلوب ويجب أن يكون boolean',
+      });
+    }
+
+    const profile = await prisma.driverProfile.findUnique({
+      where: { userId: id },
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            phoneNumber: true,
+          },
+        },
+      },
+    });
+
+    if (!profile) {
+      return res.status(404).json({ success: false, error: 'هذا الكابتن غير موجود' });
+    }
+
+    const nextStatus = isBlocked ? 'REJECTED' : 'APPROVED';
+    const updatedProfile = await prisma.driverProfile.update({
+      where: { userId: id },
+      data: {
+        verificationStatus: nextStatus,
+        rejectionReason: isBlocked ? (reason || 'تم حظر الحساب بواسطة الإدارة') : null,
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            phoneNumber: true,
+          },
+        },
+      },
+    });
+
+    const normalizedStatus = calculateCaptainStatus(updatedProfile);
+
+    return res.json({
+      success: true,
+      message: isBlocked ? 'تم حظر الحساب بنجاح' : 'تم إلغاء حظر الحساب بنجاح',
+      driverProfile: {
+        ...updatedProfile,
+        status: normalizedStatus,
+        verificationStatus: normalizedStatus,
+      },
+    });
+  } catch (error) {
+    console.error('❌ updateDriverStatusHandler error:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'خطأ في تحديث حالة الكابتن',
+    });
+  }
+}
+
 async function getCaptainDetailsHandler(req, res) {
   try {
     const { userId } = req.params;
@@ -781,6 +850,7 @@ module.exports = {
   approveCaptainHandler,
   rejectCaptainHandler,
   listAllCaptainsHandler,
+  updateDriverStatusHandler,
   extendCaptainGracePeriodHandler,
   getCaptainDetailsHandler,
   getAdminStatsHandler,
