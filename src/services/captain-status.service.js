@@ -8,6 +8,7 @@ const REQUIRED_DOCUMENT_FIELDS = [
   'licenseBackUrl',
   'vehicleLicenseFrontUrl',
   'vehicleLicenseBackUrl',
+  'licenseNumber',
   'criminalRecordUrl',
   'drugTestUrl',
 ];
@@ -36,12 +37,17 @@ function getGracePeriodEndDate(profile) {
 
 function calculateCaptainStatus(profile, now = new Date()) {
   const status = profile.verificationStatus;
-  if (status !== 'PENDING' || areDocumentsComplete(profile)) {
-    return status;
+
+  if (status === 'PENDING') {
+    if (areDocumentsComplete(profile)) {
+      return 'APPROVED';
+    }
+
+    const gracePeriodEndDate = getGracePeriodEndDate(profile);
+    return gracePeriodEndDate && now > gracePeriodEndDate ? 'DOCS_EXPIRED' : status;
   }
 
-  const gracePeriodEndDate = getGracePeriodEndDate(profile);
-  return gracePeriodEndDate && now > gracePeriodEndDate ? 'DOCS_EXPIRED' : status;
+  return status;
 }
 
 function withCalculatedCaptainStatus(profile, now = new Date()) {

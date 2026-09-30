@@ -11,6 +11,7 @@
 const prisma = require('../config/prisma');
 const { validateFile, uploadBuffer } = require('../services/upload.service');
 const DOCUMENT_MAP = require('../config/upload-map');
+const { areDocumentsComplete } = require('../services/captain-status.service');
 const FIELD_LABELS = {};  // Reserved for future human-readable labels
 
 // ─── Helpers ──────────────────────────────────────────────
@@ -76,9 +77,16 @@ async function uploadDocument(req, res) {
     }
 
     const updateData = { [docConfig.prismaField]: result.secure_url };
+    const currentProfile = await prisma.driverProfile.findUnique({ where: { userId: req.user.userId } });
+    const nextProfile = { ...(currentProfile || {}), ...updateData };
+    const shouldAutoApprove = currentProfile && currentProfile.verificationStatus === 'PENDING' && areDocumentsComplete(nextProfile);
+
     await prisma.driverProfile.update({
       where: { userId: req.user.userId },
-      data: updateData,
+      data: {
+        ...updateData,
+        ...(shouldAutoApprove ? { verificationStatus: 'APPROVED' } : {}),
+      },
     });
     // 5. Respond
     return res.status(200).json({
